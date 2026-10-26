@@ -25,7 +25,7 @@ it. Without it the shelf stays empty and everything else works.
 | `Backdrop.java` | The scene: aurora ribbons, stars, hero backdrop, glow; `SceneView` (half resolution); `Glass` (frosted, quarter resolution, RenderEffect on Android 12+) |
 | `BentoView.java` | Clock card: dial, greeting/time, sky tile, sentence line |
 | `Weather.java` | Open-Meteo forecast, WMO codes to words and Phosphor glyphs, cache |
-| `Shelf.java` | "New and top rated on your apps": TMDB queries (`LANGUAGES`, `SERVICES`, two-week window, no animation/kids) building a pool of up to `POOL` titles, dealt into sets of 6 by `sets()`; poster views; `ShelfButton` (‹ › ↻ in the head); shelf layout |
+| `Shelf.java` | "New and top rated on your apps": TMDB queries (`LANGUAGES`, `SERVICES`, two-week window, no animation/kids) building a pool of up to `POOL` titles, dealt into sets of 6 by `sets()`; wide title cards (`PosterView`, 16:9, TMDB backdrops with the title lettered on when there is one); `SpotlightView` (the focused title's name, details and story); `ShelfButton` (‹ › ↻ in the head); shelf layout |
 | `Sports.java` | Flip card: Arsenal and India (TheSportsDB, key `123`), F1 (Jolpica); faces `MatchTile`, `RaceTile`; `CardView` flips on Left/Right |
 | `DockView.java` | App grid (rows of `columns`), drawn covers (`BRANDS` colours), focus routing inside the grid |
 | `ArtView.java` | Base for focusable pictures: fine ring, colour change, nothing grows |

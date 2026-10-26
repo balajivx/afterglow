@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- The layout, in dp (the TV is 960 x 540 dp): the scene behind everything, the clock card top left,
-     the sports card top right with Inputs and Settings above it, the shelf under them across the full width, and the app dock along the
+     the sports card top right with Inputs and Settings above it, the focused title's story, the shelf of wide cards above the dock, and the app dock along the
      bottom in rows of six. Each slot is filled in code. -->
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/root"
@@ -47,12 +47,21 @@
             android:layout_marginTop="32dp"
             android:clipChildren="false" />
 
+        <!-- The focused title's story, over its backdrop in the sky. -->
+        <FrameLayout
+            android:id="@+id/spotlightSlot"
+            android:layout_width="420dp"
+            android:layout_height="100dp"
+            android:layout_marginStart="56dp"
+            android:layout_marginTop="184dp" />
+
+        <!-- The shelf: its head, then one row of six wide cards (128 x 72). -->
         <FrameLayout
             android:id="@+id/shelfSlot"
             android:layout_width="848dp"
-            android:layout_height="270.6dp"
+            android:layout_height="101dp"
             android:layout_marginStart="56dp"
-            android:layout_marginTop="133dp"
+            android:layout_marginTop="302dp"
             android:clipChildren="false" />
 
         <FrameLayout

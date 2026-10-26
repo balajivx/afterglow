@@ -3,6 +3,4 @@
     <string name="shelf_head">New and top rated on your apps</string>
     <!-- TMDB's terms ask for this credit; TMDB's streaming availability is supplied by JustWatch. -->
     <string name="credit_tmdb">Data from TMDB · streaming info by JustWatch</string>
-    <!-- Under the wide poster while there's nothing to show yet. -->
-    <string name="shelf_waiting">Titles from your apps appear here</string>
 </resources>

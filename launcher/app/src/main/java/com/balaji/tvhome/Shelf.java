@@ -50,12 +50,16 @@ final class Shelf {
     static final int POOL = 30, MAX_ASKED = 80;
 
     static final class Item {
-        final String title, meta, image, backdrop, pkg;
+        /** [image]: the card's wide picture; [titled]: it already carries the title, so none is drawn on it. */
+        final String title, meta, overview, image, backdrop, pkg;
+        final boolean titled;
 
-        Item(String title, String meta, String image, String backdrop, String pkg) {
+        Item(String title, String meta, String overview, String image, boolean titled, String backdrop, String pkg) {
             this.title = title;
             this.meta = meta;
+            this.overview = overview;
             this.image = image;
+            this.titled = titled;
             this.backdrop = backdrop;
             this.pkg = pkg;
         }
@@ -216,8 +220,7 @@ final class Shelf {
                 List<Future<JSONObject>> d = new ArrayList<>();
                 for (int i = 0; i < c.size() && i < MAX_ASKED / n; i++) {
                     JSONObject r = c.get(i);
-                    d.add(pool.submit(() -> tmdb(token, "/" + r.optString("_type") + "/" + r.optInt("id"),
-                            Collections.singletonMap("append_to_response", "watch/providers"))));
+                    d.add(pool.submit(() -> tmdb(token, "/" + r.optString("_type") + "/" + r.optInt("id"), DETAILS)));
                 }
                 details.add(d);
             }
@@ -254,6 +257,14 @@ final class Shelf {
         } finally {
             pool.shutdownNow();
         }
+    }
+
+    /** A title's details, where it streams, and its wide pictures (those with the title on them too). */
+    private static final Map<String, String> DETAILS = new HashMap<>();
+
+    static {
+        DETAILS.put("append_to_response", "watch/providers,images");
+        DETAILS.put("include_image_language", "en,te,hi,null");
     }
 
     private static <T> T result(Future<T> f) throws IOException {
@@ -294,9 +305,18 @@ final class Shelf {
         }
         if (app == null) return null;
         String rating = rated(r) ? String.format(Locale.US, "★ %.1f", r.optDouble("vote_average", 0)) : "New";
-        String kind = !tv ? "Movie" : "S" + Math.max(1, season);
-        return new Item(r.optString(tv ? "name" : "title"), rating + " · " + lang + "\n" + app.name + " · " + kind,
-                "https://image.tmdb.org/t/p/w342" + r.optString("poster_path"),
+        String kind = !tv ? "Movie" : "Season " + Math.max(1, season);
+        // The card: the best rated wide picture with the title lettered on it, else the plain backdrop.
+        String card = null;
+        JSONObject images = d.optJSONObject("images");
+        JSONArray wide = images == null ? null : images.optJSONArray("backdrops");
+        for (int k = 0; wide != null && k < wide.length() && card == null; k++) {
+            JSONObject w = wide.optJSONObject(k);
+            if (w != null && !w.isNull("iso_639_1") && w.optString("file_path").startsWith("/")) card = w.optString("file_path");
+        }
+        return new Item(r.optString(tv ? "name" : "title"), rating + " · " + lang + " · " + app.name + " · " + kind,
+                d.optString("overview", r.optString("overview")).trim(),
+                "https://image.tmdb.org/t/p/w780" + (card != null ? card : r.optString("backdrop_path")), card != null,
                 "https://image.tmdb.org/t/p/w1280" + r.optString("backdrop_path"), app.pkg);
     }
 
@@ -351,8 +371,8 @@ final class Shelf {
                 List<Item> out = new ArrayList<>();
                 for (int i = 0; i < a.length(); i++) {
                     JSONObject o = a.getJSONObject(i);
-                    out.add(new Item(o.getString("title"), o.getString("meta"), o.getString("image"),
-                            o.getString("backdrop"), o.getString("package")));
+                    out.add(new Item(o.getString("title"), o.getString("meta"), o.optString("overview"), o.getString("image"),
+                            o.optBoolean("titled"), o.getString("backdrop"), o.getString("package")));
                 }
                 return out.isEmpty() ? null : out;
             } catch (IOException | JSONException e) {
@@ -365,7 +385,7 @@ final class Shelf {
         }
 
         private static String sourceName() {
-            return "TMDB_POOL1";
+            return "TMDB_CARDS1";
         }
 
         long age(long now) {
@@ -382,7 +402,7 @@ final class Shelf {
             try {
                 for (Item it : items) {
                     a.put(new JSONObject().put("title", it.title).put("meta", it.meta).put("image", it.image)
-                            .put("backdrop", it.backdrop).put("package", it.pkg));
+                            .put("overview", it.overview).put("titled", it.titled).put("backdrop", it.backdrop).put("package", it.pkg));
                 }
                 Net.writeAtomically(file, new JSONObject().put("source", sourceName()).put("items", a).toString());
             } catch (JSONException e) {
@@ -407,7 +427,7 @@ final class Shelf {
                 kept.delete();
             }
             if (!online) return null;
-            File part = new File(pictures, key + ".part");
+            File part = new File(pictures, key + "." + Thread.currentThread().getId() + ".part"); // one per download
             try {
                 Net.download(url, part);
                 b = Net.decodeFile(part, w, h);
@@ -428,7 +448,7 @@ final class Shelf {
             pictures.mkdirs();
             File kept = new File(pictures, key + ".jpg");
             if (kept.isFile()) return;
-            File part = new File(pictures, key + ".part");
+            File part = new File(pictures, key + "." + Thread.currentThread().getId() + ".part"); // one per download
             try {
                 Net.download(url, part);
                 Bitmap b = Net.decodeFile(part, w, h);
@@ -452,37 +472,37 @@ final class Shelf {
 
     // ---- The posters and the shelf
 
-    /** A poster: the art (radius 16), its title (15, brightening with focus) and the details (13). */
+    /**
+     * A wide card (16:9, radius 12): the title's picture, nothing else. A picture without the title
+     * lettered on it gets the title in small type over a soft shade at its foot. The rest (rating, language,
+     * app, story) shows once, for the focused card, in the [SpotlightView].
+     */
     static final class PosterView extends ArtView {
-        private final TextPaint titleP, metaP;
-        private final Paint fillP = new Paint(Paint.ANTI_ALIAS_FLAG), glyphP = new Paint(Paint.FILTER_BITMAP_FLAG);
+        private final TextPaint titleP;
+        private final Paint fillP = new Paint(Paint.ANTI_ALIAS_FLAG), glyphP = new Paint(Paint.FILTER_BITMAP_FLAG),
+                shadeP = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final int glyphSize;
         private final Bitmap glyph;
-        private String title = "", meta = "", app = "";
-        private CharSequence shownTitle = "", shownMeta = "", shownApp = "";
-        private float titleBase, metaBase, appBase;
+        private String title = "";
+        private CharSequence shownTitle = "";
+        private boolean titled;
+        private float titleBase;
         float artHeight;
+        Item item;
 
         PosterView(Context c) {
             super(c);
-            titleP = Ui.textPaint(c, Ui.medium(c), Ui.T_BODY, Ui.TEXT_2, -0.006f, false);
-            metaP = Ui.textPaint(c, Ui.medium(c), Ui.T_LABEL, Ui.TEXT_2, 0f, false);
-            glyphSize = Ui.dpi(c, 36f);
+            titleP = Ui.textPaint(c, Ui.semibold(c), Ui.T_LABEL, Ui.TEXT, 0f, false);
+            titleP.setShadowLayer(Ui.dp(c, 3f), 0f, Ui.dp(c, 1f), 0x99000000);
+            glyphSize = Ui.dpi(c, 22f);
             glyph = Ui.glyph(c, R.drawable.ph_film_slate, glyphSize);
         }
 
-        /** Below the art: the title, then the details ("★ 7.6 · Telugu"), then the app on its own line. */
-        static float textHeight(Context c) {
-            return Ui.dp(c, Ui.S3 + Ui.T_BODY * 1.3f + 2f + 2 * Ui.T_LABEL * 1.3f);
-        }
-
-        /** [meta] may hold a second line after a newline: the app. */
-        void setText(String title, String meta) {
-            int nl = meta.indexOf('\n');
-            this.title = title;
-            this.meta = nl < 0 ? meta : meta.substring(0, nl);
-            this.app = nl < 0 ? "" : meta.substring(nl + 1);
-            setContentDescription(meta.isEmpty() ? title : title + ", " + meta.replace('\n', ' '));
+        void setItem(Item it) {
+            item = it;
+            title = it == null ? "" : it.title;
+            titled = it != null && it.titled;
+            setContentDescription(it == null ? "" : it.title + ", " + it.meta);
             fitText();
             invalidate();
         }
@@ -490,40 +510,114 @@ final class Shelf {
         @Override
         protected void onSizeChanged(int w, int h, int ow, int oh) {
             Context c = getContext();
-            placeArt(ringSpace, ringSpace, w - 2 * ringSpace, artHeight, Ui.dp(c, Ui.R_POSTER));
-            float titleTop = art.bottom + Ui.dp(c, Ui.S3);
-            titleBase = Ui.baselineIn(titleP, titleTop, Ui.dp(c, Ui.T_BODY * 1.3f));
-            metaBase = Ui.baselineIn(metaP, titleTop + Ui.dp(c, Ui.T_BODY * 1.3f + 2f), Ui.dp(c, Ui.T_LABEL * 1.3f));
-            appBase = metaBase + Ui.dp(c, Ui.T_LABEL * 1.3f);
+            placeArt(ringSpace, ringSpace, w - 2 * ringSpace, artHeight, Ui.dp(c, R_CARD));
+            titleBase = art.bottom - Ui.dp(c, Ui.S2) - titleP.descent();
+            shadeP.setShader(new android.graphics.LinearGradient(0, art.bottom - art.height() * 0.6f, 0, art.bottom,
+                    0x00000000, 0xB3000000, android.graphics.Shader.TileMode.CLAMP));
             fitText();
         }
 
         private void fitText() {
-            float w = art.width();
+            float w = art.width() - 2 * Ui.dp(getContext(), Ui.S2 + 2f);
             if (w <= 0) return;
             shownTitle = TextUtils.ellipsize(title, titleP, w, TextUtils.TruncateAt.END);
-            shownMeta = TextUtils.ellipsize(meta, metaP, w, TextUtils.TruncateAt.END);
-            shownApp = TextUtils.ellipsize(app, metaP, w, TextUtils.TruncateAt.END);
         }
 
         @Override
         protected void drawEmptyArt(Canvas canvas, float focused) {
             fillP.setColor(Ui.mix(Ui.FILL, Ui.POSTER_FOCUS, focused));
             canvas.drawRoundRect(art, radius, radius, fillP);
-            glyphP.setColor(Ui.mix(Ui.TEXT_2, Ui.TEXT, focused));
-            glyphP.setAlpha(Math.round(255 * 0.6f));
-            canvas.drawBitmap(glyph, art.centerX() - glyphSize / 2f, art.centerY() - glyphSize / 2f, glyphP);
+            if (title.isEmpty()) {
+                glyphP.setColor(Ui.mix(Ui.TEXT_2, Ui.TEXT, focused));
+                glyphP.setAlpha(Math.round(255 * 0.5f));
+                canvas.drawBitmap(glyph, art.centerX() - glyphSize / 2f, art.centerY() - glyphSize / 2f, glyphP);
+            } else {
+                drawTitle(canvas);
+            }
         }
 
         @Override
-        protected void drawUnderArt(Canvas canvas, float focused) {
-            titleP.setColor(Ui.mix(Ui.TEXT_2, Ui.TEXT, focused));
-            canvas.drawText(shownTitle, 0, shownTitle.length(), art.left, titleBase, titleP);
-            if (shownMeta.length() > 0) {
-                metaP.setColor(Ui.withAlpha(Ui.TEXT_2, 0.75f + 0.25f * focused));
-                canvas.drawText(shownMeta, 0, shownMeta.length(), art.left, metaBase, metaP);
+        protected void drawOverArt(Canvas canvas, float focused) {
+            if (!hasArt() || titled || shownTitle.length() == 0) return;
+            canvas.drawRoundRect(art, radius, radius, shadeP);
+            drawTitle(canvas);
+        }
+
+        private void drawTitle(Canvas canvas) {
+            canvas.drawText(shownTitle, 0, shownTitle.length(), art.left + Ui.dp(getContext(), Ui.S2 + 2f), titleBase, titleP);
+        }
+    }
+
+    static final float R_CARD = 12f;
+
+    /**
+     * The focused card's story, once, at the left under the clock: its title (24), then "★ 8.8 · English ·
+     * JioHotstar · Season 1" (13), then two lines of what it's about (13). It fades to each new title.
+     */
+    static final class SpotlightView extends View {
+        private final TextPaint titleP, metaP, aboutP;
+        private Item item;
+        private CharSequence shownTitle = "";
+        private android.text.StaticLayout about;
+        private final Ui.Tween in = new Ui.Tween(0f);
+
+        SpotlightView(Context c) {
+            super(c);
+            titleP = Ui.textPaint(c, Ui.semibold(c), 24f, Ui.TEXT, -0.012f, false);
+            metaP = Ui.textPaint(c, Ui.medium(c), Ui.T_LABEL, Ui.TEXT_2, 0f, false);
+            aboutP = Ui.textPaint(c, Ui.regular(c), Ui.T_LABEL, Ui.TEXT_2, 0f, false);
+            setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);
+        }
+
+        void show(Item it) {
+            if (it == item) return;
+            item = it;
+            layoutText();
+            in.snap(0f);
+            in.to(1f, 360);
+            invalidate();
+        }
+
+        @Override
+        protected void onSizeChanged(int w, int h, int ow, int oh) {
+            layoutText();
+        }
+
+        private void layoutText() {
+            int w = getWidth();
+            if (w <= 0 || item == null) {
+                about = null;
+                shownTitle = "";
+                return;
             }
-            if (shownApp.length() > 0) canvas.drawText(shownApp, 0, shownApp.length(), art.left, appBase, metaP);
+            shownTitle = TextUtils.ellipsize(item.title, titleP, w, TextUtils.TruncateAt.END);
+            about = item.overview.isEmpty() ? null : android.text.StaticLayout.Builder
+                    .obtain(item.overview, 0, item.overview.length(), aboutP, w)
+                    .setMaxLines(2).setEllipsize(TextUtils.TruncateAt.END)
+                    .setLineSpacing(Ui.dp(getContext(), 3f), 1f).build();
+        }
+
+        @Override
+        protected void onDraw(Canvas canvas) {
+            boolean moving = in.step();
+            if (item != null) {
+                Context c = getContext();
+                int a = Math.round(255 * in.value);
+                float y = Ui.baselineIn(titleP, 0, Ui.dp(c, 30f));
+                titleP.setAlpha(a);
+                canvas.drawText(shownTitle, 0, shownTitle.length(), 0, y, titleP);
+                y = Ui.baselineIn(metaP, Ui.dp(c, 34f), Ui.dp(c, 17f));
+                metaP.setAlpha(a);
+                canvas.drawText(item.meta, 0, y, metaP);
+                if (about != null) {
+                    aboutP.setAlpha(Math.round(a * 0.8f));
+                    int save = canvas.save();
+                    canvas.translate(0, Ui.dp(c, 60f));
+                    about.draw(canvas);
+                    canvas.restoreToCount(save);
+                }
+            }
+            if (moving) postInvalidateOnAnimation();
         }
     }
 
@@ -688,19 +782,19 @@ final class Shelf {
                 g.widths[i] = w;
             }
             g.artTop = Ui.dp(c, Ui.T_LABEL * 1.3f + Ui.S3);
-            g.artHeight = slotH - g.artTop - PosterView.textHeight(c);
+            g.artHeight = slotH - g.artTop;
             return g;
         }
 
         @Override
         protected void onMeasure(int wSpec, int hSpec) {
             setMeasuredDimension(MeasureSpec.getSize(wSpec), MeasureSpec.getSize(hSpec));
-            Geometry g = geometry(getContext(), getMeasuredWidth() - 2f * overhang, getMeasuredHeight() - overhang);
+            Geometry g = geometry(getContext(), getMeasuredWidth() - 2f * overhang, getMeasuredHeight() - 2f * overhang);
             for (int i = 0; i < COUNT; i++) {
                 PosterView p = posters.get(i);
                 p.artHeight = g.artHeight;
                 p.measure(MeasureSpec.makeMeasureSpec(Math.round(g.widths[i] + 2 * overhang), MeasureSpec.EXACTLY),
-                        MeasureSpec.makeMeasureSpec(Math.round(overhang + g.artHeight + PosterView.textHeight(getContext())), MeasureSpec.EXACTLY));
+                        MeasureSpec.makeMeasureSpec(Math.round(2 * overhang + g.artHeight), MeasureSpec.EXACTLY));
             }
             int size = MeasureSpec.makeMeasureSpec(Math.round(ShelfButton.diameter(getContext()) + 2 * overhang), MeasureSpec.EXACTLY);
             for (ShelfButton b : buttons) b.measure(size, size);
@@ -708,7 +802,7 @@ final class Shelf {
 
         @Override
         protected void onLayout(boolean changed, int l, int t, int r, int b) {
-            Geometry g = geometry(getContext(), getWidth() - 2f * overhang, getHeight() - overhang);
+            Geometry g = geometry(getContext(), getWidth() - 2f * overhang, getHeight() - 2f * overhang);
             for (int i = 0; i < COUNT; i++) {
                 PosterView p = posters.get(i);
                 int x = Math.round(g.lefts[i]), y = Math.round(g.artTop);

@@ -57,6 +57,7 @@ public class MainActivity extends Activity {
     private Backdrop.SceneView sceneView;
     private BentoView bento;
     private Shelf.ShelfView shelf;
+    private Shelf.SpotlightView spotlight;
     private DockView dock;
     private FrameLayout shelfSlot, dockSlot;
     private View content;
@@ -141,10 +142,13 @@ public class MainActivity extends Activity {
         inputs.setOnFocusChangeListener(rememberQuick);
         settings.setOnFocusChangeListener(rememberQuick);
 
+        spotlight = new Shelf.SpotlightView(this);
+        ((FrameLayout) findViewById(R.id.spotlightSlot)).addView(spotlight, match());
+
         shelfSlot = findViewById(R.id.shelfSlot);
         shelf = new Shelf.ShelfView(this);
         ViewGroup.LayoutParams s = shelfSlot.getLayoutParams();
-        FrameLayout.LayoutParams sp = new FrameLayout.LayoutParams(s.width + 2 * shelf.overhang, s.height + shelf.overhang);
+        FrameLayout.LayoutParams sp = new FrameLayout.LayoutParams(s.width + 2 * shelf.overhang, s.height + 2 * shelf.overhang);
         sp.leftMargin = -shelf.overhang;
         sp.topMargin = -shelf.overhang;
         shelfSlot.addView(shelf, sp);
@@ -177,6 +181,7 @@ public class MainActivity extends Activity {
             if (i >= 0) {
                 movePage(-1);
                 sceneView.hero(heroes[i]);
+                spotlight.show(shelf.posters.get(i).item);
             }
         });
 
@@ -599,12 +604,12 @@ public class MainActivity extends Activity {
             // A short last set leaves its empty places out of sight (and out of focus's way).
             p.setVisibility(item == null && items != null ? View.INVISIBLE : View.VISIBLE);
             if (item == null) {
-                p.setText(i == 0 && items == null ? getString(R.string.shelf_waiting) : "", "");
+                p.setItem(null);
                 p.onPress = null;
                 if (pictures != null || items == null) p.setArt(null);
                 p.glowColor = Colors.FALLBACK;
             } else {
-                p.setText(item.title, item.meta);
+                p.setItem(item);
                 p.onPress = () -> openPkg(item.pkg);
                 if (pictures != null) p.setArt(pictures.get(i));
                 // The glow takes the colour of the app the poster opens.
@@ -617,6 +622,9 @@ public class MainActivity extends Activity {
         if (shelf.findFocus() instanceof Shelf.PosterView && shelf.findFocus().getVisibility() != View.VISIBLE) {
             shelf.lastFocused().requestFocus();
         }
+        // The spotlight tells the focused card's story, or the set's first while focus is elsewhere.
+        int at = Math.max(0, shelf.posters.indexOf(getCurrentFocus()));
+        spotlight.show(items == null || items.isEmpty() ? null : items.get(Math.min(at, items.size() - 1)));
     }
 
     private int[][] posterSizes() {
@@ -758,6 +766,10 @@ public class MainActivity extends Activity {
             shelfSource.fetchPicture(it.backdrop, hw, hh);
         }
         shelfSource.prunePictures(keys);
+        // Any card still without its picture (another download had it in hand) gets it from disk now.
+        handler.post(() -> {
+            if (shelfSets != null) showSet(shelfSet);
+        });
     }
 
     // ------------------------------------------------------------------ keeping fresh

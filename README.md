@@ -26,7 +26,7 @@ Two small buttons: one opens the TV's list of inputs (HDMI boxes, streamers), th
 Shows and movies that came out in the last two weeks and are already streaming on the apps on your TV, six at
 a time: page through the sets with ‹ › or press ↻ for the latest. About half are Telugu, 35% English and 15%
 Hindi. The best rated lead; brand-new ones still waiting for ratings say
-**New**. No cartoons or anime. Move onto a poster and its artwork softly fills the sky behind it.
+**New**. No cartoons or anime. One slim row of wide title cards; move onto one and its story appears above the row while its artwork softly fills the sky behind it.
 
 **📺 Your apps** (bottom)
 Every app, six to a row, each on a card in its own brand colour, all equally bright, so nothing shouts.

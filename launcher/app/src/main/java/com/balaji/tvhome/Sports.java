@@ -242,7 +242,7 @@ final class Sports {
         /** True once the viewer has flipped it; until then the card shows whatever comes first. */
         boolean flipped;
         /** Where Down goes. */
-        java.util.function.Supplier<View> below;
+        java.util.function.Supplier<View> below, above;
         /** Told when the face changes while focused, with its colour for the glow. */
         java.util.function.IntConsumer onFace;
 
@@ -322,6 +322,7 @@ final class Sports {
         public View focusSearch(View focused, int direction) {
             if (focused == this) {
                 if (direction == FOCUS_DOWN && below != null && below.get() != null) return below.get();
+                if (direction == FOCUS_UP && above != null && above.get() != null) return above.get();
                 return this;
             }
             return super.focusSearch(focused, direction);

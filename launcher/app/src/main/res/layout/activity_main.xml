@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- The layout, in dp (the TV is 960 x 540 dp): the scene behind everything, the clock card top left,
-     the sports card top right, the shelf under them across the full width, and the app dock along the
+     the sports card top right with Inputs and Settings above it, the shelf under them across the full width, and the app dock along the
      bottom in rows of six. Each slot is filled in code. -->
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/root"
@@ -27,6 +27,15 @@
             android:layout_height="89dp"
             android:layout_marginStart="56dp"
             android:layout_marginTop="32dp"
+            android:clipChildren="false" />
+
+        <!-- Over the sports card's right end: Inputs and Settings, two small round buttons. -->
+        <FrameLayout
+            android:id="@+id/quickSlot"
+            android:layout_width="58dp"
+            android:layout_height="28dp"
+            android:layout_marginStart="849dp"
+            android:layout_marginTop="1dp"
             android:clipChildren="false" />
 
         <!-- Sports: one card, Arsenal / India cricket / F1, top right; the clock card's size, mirrored. -->

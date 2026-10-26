@@ -19,6 +19,9 @@ race**. Select it and press left or right to flip it over. Each side has its own
 a blue night with the cricket strip, a carbon-black race car finish. It tells you when it starts in your
 time, counts down, and says **Live** while it's on.
 
+**⚙️ Inputs and Settings** (top right, above the sports card)
+Two small buttons: one opens the TV's list of inputs (HDMI boxes, streamers), the other its Settings.
+
 **🎬 New and top rated on your apps** (middle)
 Shows and movies that came out in the last two weeks and are already streaming on the apps on your TV, six at
 a time: page through the sets with ‹ › or press ↻ for the latest. About half are Telugu, 35% English and 15%

@@ -77,6 +77,8 @@ public class MainActivity extends Activity {
     private List<Shelf.Item> shelfItems, shelfPool;
     private List<List<Shelf.Item>> shelfSets;
     private int shelfSet, shelfTicket;
+    /** Inputs or Settings, whichever had focus last (Up from the sports card goes there). */
+    private View lastQuick;
     private boolean weatherBusy, shelfBusy, resumed;
     private long shelfQuietUntil;
 
@@ -111,6 +113,34 @@ public class MainActivity extends Activity {
         sportsSlot.addView(sports, sl);
         sportsSource = new Sports.Source(getCacheDir());
 
+        // Inputs and Settings over the sports card: Up from the card reaches them, Down goes back.
+        FrameLayout quickSlot = findViewById(R.id.quickSlot);
+        Shelf.ShelfButton inputs = new Shelf.ShelfButton(this, R.drawable.ph_arrow_square_in_bold, "Inputs");
+        Shelf.ShelfButton settings = new Shelf.ShelfButton(this, R.drawable.ph_gear_six_bold, "Settings");
+        int quick = Math.round(Shelf.ShelfButton.diameter(this) + 2 * inputs.ringSpace);
+        FrameLayout.LayoutParams ip = new FrameLayout.LayoutParams(quick, quick), gp = new FrameLayout.LayoutParams(quick, quick);
+        gp.leftMargin = Ui.dpi(this, 30f);
+        quickSlot.addView(inputs, ip);
+        quickSlot.addView(settings, gp);
+        inputs.onPress = () -> openFirst(new Intent("com.android.tv.action.VIEW_INPUTS"),
+                new Intent("com.sony.dtv.tvsettings.intent.action.MANAGE_INPUTS"));
+        settings.onPress = () -> openFirst(new Intent(android.provider.Settings.ACTION_SETTINGS));
+        inputs.setId(View.generateViewId());
+        settings.setId(View.generateViewId());
+        inputs.setNextFocusRightId(settings.getId());
+        settings.setNextFocusLeftId(inputs.getId());
+        // Nowhere further left, right or up: stay put.
+        inputs.setNextFocusLeftId(inputs.getId());
+        settings.setNextFocusRightId(settings.getId());
+        inputs.setNextFocusUpId(inputs.getId());
+        settings.setNextFocusUpId(settings.getId());
+        lastQuick = settings;
+        View.OnFocusChangeListener rememberQuick = (v, has) -> {
+            if (has) lastQuick = v;
+        };
+        inputs.setOnFocusChangeListener(rememberQuick);
+        settings.setOnFocusChangeListener(rememberQuick);
+
         shelfSlot = findViewById(R.id.shelfSlot);
         shelf = new Shelf.ShelfView(this);
         ViewGroup.LayoutParams s = shelfSlot.getLayoutParams();
@@ -129,6 +159,9 @@ public class MainActivity extends Activity {
         shelf.below = dock::lastFocused;
         shelf.above = () -> sports;
         sports.below = shelf::lastFocused;
+        sports.above = () -> lastQuick;
+        sports.setId(View.generateViewId());
+        for (View q : new View[]{inputs, settings}) q.setNextFocusDownId(sports.getId());
         shelf.prev.onPress = () -> showSet(shelfSet - 1);
         shelf.next.onPress = () -> showSet(shelfSet + 1);
         shelf.refresh.onPress = () -> loadShelf(true);
@@ -366,6 +399,18 @@ public class MainActivity extends Activity {
         try {
             startActivity(new Intent(a.intent));
         } catch (Exception ignored) {
+        }
+    }
+
+    /** Opens the first of [intents] something on this TV answers. */
+    private void openFirst(Intent... intents) {
+        for (Intent i : intents) {
+            try {
+                startActivity(i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+                return;
+            } catch (Exception ignored) {
+                // Not on this TV: try the next.
+            }
         }
     }
 

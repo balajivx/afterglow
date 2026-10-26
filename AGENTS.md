@@ -38,6 +38,8 @@ Resources: `res/values/config.xml` (dock order, hidden apps, weather place, colu
 
 ## Rules this design keeps
 
+- Inputs and Settings sit over the sports card (`quickSlot`, built in `MainActivity.onCreate`; Inputs
+  sends `com.android.tv.action.VIEW_INPUTS`, which opens Sony's Inputs panel). Up from the card reaches them.
 - The shelf pages through its sets with ‹ › and refetches with ↻ (`MainActivity.showSet`, `loadShelf(true)`);
   Up from a poster reaches those buttons, Up again the sports card.
 - Focus is a colour change plus a 1 dp ring. Nothing grows, lifts or slides (the sports card's flip and

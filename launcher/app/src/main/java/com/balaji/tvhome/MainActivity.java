@@ -51,6 +51,7 @@ public class MainActivity extends Activity {
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final ExecutorService weatherIo = Executors.newSingleThreadExecutor();
     private final ExecutorService shelfIo = Executors.newSingleThreadExecutor();
+    private final ExecutorService pictureIo = Executors.newSingleThreadExecutor();
     private final ExecutorService coverIo = Executors.newSingleThreadExecutor();
 
     private Backdrop.SceneView sceneView;
@@ -73,8 +74,10 @@ public class MainActivity extends Activity {
     private Shelf.Source shelfSource;
     private Weather forecast;
     private Weather.Reading reading;
-    private List<Shelf.Item> shelfItems;
-    private boolean shelfComplete, weatherBusy, shelfBusy, resumed;
+    private List<Shelf.Item> shelfItems, shelfPool;
+    private List<List<Shelf.Item>> shelfSets;
+    private int shelfSet, shelfTicket;
+    private boolean weatherBusy, shelfBusy, resumed;
     private long shelfQuietUntil;
 
     private final Map<String, DockView.App> apps = new LinkedHashMap<>();
@@ -126,6 +129,9 @@ public class MainActivity extends Activity {
         shelf.below = dock::lastFocused;
         shelf.above = () -> sports;
         sports.below = shelf::lastFocused;
+        shelf.prev.onPress = () -> showSet(shelfSet - 1);
+        shelf.next.onPress = () -> showSet(shelfSet + 1);
+        shelf.refresh.onPress = () -> loadShelf(true);
         sports.onFace = color -> sceneView.glow(color);
         dock.onFocus = t -> movePage(dock.rowOf(t));
         findViewById(R.id.root).getViewTreeObserver().addOnGlobalFocusChangeListener((old, now) -> {
@@ -235,6 +241,7 @@ public class MainActivity extends Activity {
         }
         weatherIo.shutdownNow();
         shelfIo.shutdownNow();
+        pictureIo.shutdownNow();
         coverIo.shutdownNow();
     }
 
@@ -540,9 +547,12 @@ public class MainActivity extends Activity {
     /** Shows [items] with their [pictures]; null items shows the calm empty state . */
     private void showShelf(List<Shelf.Item> items, List<Bitmap> pictures) {
         shelf.setHead(getString(R.string.shelf_head), items == null ? "" : getString(R.string.credit_tmdb));
+        shelf.setPage(shelfSet, shelfSets == null ? 0 : shelfSets.size());
         for (int i = 0; i < Shelf.COUNT; i++) {
             Shelf.PosterView p = shelf.posters.get(i);
             Shelf.Item item = items != null && i < items.size() ? items.get(i) : null;
+            // A short last set leaves its empty places out of sight (and out of focus's way).
+            p.setVisibility(item == null && items != null ? View.INVISIBLE : View.VISIBLE);
             if (item == null) {
                 p.setText(i == 0 && items == null ? getString(R.string.shelf_waiting) : "", "");
                 p.onPress = null;
@@ -559,6 +569,9 @@ public class MainActivity extends Activity {
             }
             if (p.isFocused()) sceneView.glow(p.glowColor);
         }
+        if (shelf.findFocus() instanceof Shelf.PosterView && shelf.findFocus().getVisibility() != View.VISIBLE) {
+            shelf.lastFocused().requestFocus();
+        }
     }
 
     private int[][] posterSizes() {
@@ -570,68 +583,136 @@ public class MainActivity extends Activity {
     }
 
     private void loadShelf() {
+        loadShelf(false);
+    }
+
+    /**
+     * The titles: from disk at once, then from TMDB when they're four hours old ([fresh]: now, for the
+     * refresh button, which then shows a set with titles not seen before, or else the next set).
+     */
+    private void loadShelf(boolean fresh) {
         if (shelfBusy || apps.isEmpty() || !shelfSource.hasToken()) return;
         shelfBusy = true;
+        if (fresh) shelf.refresh.spin(true);
         final long now = System.currentTimeMillis();
-        final boolean online = online(), complete = shelfComplete;
-        final boolean quiet = shelfQuietUntil - now > 0;
-        final List<Shelf.Item> current = shelfItems;
+        final boolean online = online();
+        final boolean quiet = !fresh && shelfQuietUntil - now > 0;
+        final List<Shelf.Item> known = shelfPool;
         final Set<String> installed = new HashSet<>(apps.keySet());
         final int[][] sizes = posterSizes();
         shelfIo.execute(() -> {
+            List<Shelf.Item> pool = known;
             try {
-                List<Shelf.Item> data = current;
-                boolean whole = complete;
-                if (data == null) {
-                    data = shelfSource.cached();
-                    if (data != null) whole = present(data, sizes, false);
+                if (pool == null) {
+                    pool = shelfSource.cached();
+                    if (pool != null) {
+                        List<Shelf.Item> cached = pool;
+                        handler.post(() -> usePool(cached, -1, null));
+                    }
                 }
                 boolean stale = shelfSource.age(now) >= SHELF_EVERY_MS;
-                if (quiet || !online || (!stale && data != null && whole)) return;
-                // Stale or missing: ask the service. Fresh but a picture missing: just fetch the pictures.
-                if (stale || data == null) data = shelfSource.fetch(now, installed);
-                present(data, sizes, true);
+                if (!fresh && (quiet || !online || (!stale && pool != null))) return;
+                List<Shelf.Item> got = shelfSource.fetch(now, installed);
+                handler.post(() -> {
+                    int to = -1;
+                    String note = null;
+                    if (fresh) {
+                        // The first set holding a title not seen before; else simply the next one.
+                        List<List<Shelf.Item>> sets = Shelf.sets(got);
+                        Set<String> seen = new HashSet<>();
+                        if (known != null) for (Shelf.Item it : known) seen.add(it.title + "|" + it.pkg);
+                        for (int k = 0; k < sets.size() && to < 0; k++) {
+                            for (Shelf.Item it : sets.get(k)) if (!seen.contains(it.title + "|" + it.pkg)) to = k;
+                        }
+                        if (to < 0) {
+                            to = sets.isEmpty() ? 0 : (shelfSet + 1) % sets.size();
+                            note = "Up to date";
+                        } else {
+                            note = "New titles";
+                        }
+                    }
+                    usePool(got, to, note);
+                });
+                prefetchPictures(got, sizes);
             } catch (IOException e) {
                 // Offline, the service hiccuped, or too few shows this week: keep the shelf that's up.
                 handler.post(() -> {
+                    if (fresh) {
+                        if (shelfSets != null && shelfSets.size() > 1) showSet((shelfSet + 1) % shelfSets.size());
+                        shelf.note(online ? "Couldn't reach TMDB" : "Offline");
+                    }
                     shelfQuietUntil = System.currentTimeMillis() + (shelfItems == null ? RETRY_MS : 30 * 60 * 1000L);
                     if (shelfItems == null && resumed) handler.postDelayed(retryShelf, RETRY_MS);
                 });
             } finally {
-                handler.post(() -> shelfBusy = false);
+                handler.post(() -> {
+                    shelfBusy = false;
+                    shelf.refresh.spin(false);
+                });
             }
         });
     }
 
-    /** Cuts the pictures to size (from disk, or downloaded when [online]) and shows it all at once; true if all came. */
-    private boolean present(List<Shelf.Item> items, int[][] sizes, boolean online) {
+    /** Takes [pool] as the shelf's titles and shows set [to] (-1: stay on the current set if it still exists). */
+    private void usePool(List<Shelf.Item> pool, int to, String note) {
+        shelfPool = pool;
+        shelfSets = Shelf.sets(pool);
+        if (shelfSets.isEmpty()) return;
+        showSet(to >= 0 ? to : Math.min(shelfSet, shelfSets.size() - 1));
+        if (note != null) shelf.note(note);
+    }
+
+    /** Shows set [index] of the titles, its pictures from disk (or the network while they're still coming). */
+    private void showSet(int index) {
+        if (shelfSets == null || index < 0 || index >= shelfSets.size()) return;
+        shelfSet = index;
+        final List<Shelf.Item> items = shelfSets.get(index);
+        final int[][] sizes = posterSizes();
+        final boolean online = online();
+        final int ticket = ++shelfTicket;
+        if (shelfItems == null || !shelfItems.equals(items)) {
+            // Titles at once; pictures as they come.
+            shelfItems = items;
+            showShelf(items, Collections.nCopies(Shelf.COUNT, (Bitmap) null));
+        } else {
+            shelf.setPage(shelfSet, shelfSets.size());
+        }
+        pictureIo.execute(() -> present(items, sizes, online, ticket));
+    }
+
+    /** Cuts the pictures for [items] to size and shows them all at once, unless another set was asked for since. */
+    private void present(List<Shelf.Item> items, int[][] sizes, boolean online, int ticket) {
         List<Bitmap> pictures = new ArrayList<>();
-        Set<String> keys = new HashSet<>();
         Bitmap[] backdrops = new Bitmap[Shelf.COUNT];
         int hw = Math.round(Ui.dp(this, 336)), hh = Math.round(Ui.dp(this, 200)); // half the hero's size on screen
-        boolean all = true;
         for (int i = 0; i < items.size() && i < Shelf.COUNT; i++) {
             Shelf.Item it = items.get(i);
-            Bitmap b = shelfSource.picture(it.image, sizes[i][0], sizes[i][1], online);
-            all &= b != null;
-            pictures.add(b);
-            keys.add(Net.keyFor(it.image, sizes[i][0], sizes[i][1]));
-            Bitmap bd = shelfSource.picture(it.backdrop, hw, hh, online);
-            backdrops[i] = Backdrop.Scene.heroMask(bd);
-            keys.add(Net.keyFor(it.backdrop, hw, hh));
+            pictures.add(shelfSource.picture(it.image, sizes[i][0], sizes[i][1], online));
+            backdrops[i] = Backdrop.Scene.heroMask(shelfSource.picture(it.backdrop, hw, hh, online));
         }
         while (pictures.size() < Shelf.COUNT) pictures.add(null);
-        if (online) shelfSource.prunePictures(keys);
-        final boolean complete = all;
         handler.post(() -> {
-            shelfItems = items;
-            shelfComplete = complete;
+            if (ticket != shelfTicket) return;
             System.arraycopy(backdrops, 0, heroes, 0, Shelf.COUNT);
             showShelf(items, pictures);
             int focused = shelf.posters.indexOf(getCurrentFocus());
             sceneView.hero(heroes[Math.max(0, focused)]);
         });
-        return complete;
+    }
+
+    /** Puts every title's pictures on disk, so paging through the sets is instant, and lets go of old ones. */
+    private void prefetchPictures(List<Shelf.Item> pool, int[][] sizes) {
+        Set<String> keys = new HashSet<>();
+        int hw = Math.round(Ui.dp(this, 336)), hh = Math.round(Ui.dp(this, 200));
+        for (Shelf.Item it : pool) {
+            keys.add(Net.keyFor(it.image, sizes[0][0], sizes[0][1]));
+            keys.add(Net.keyFor(it.backdrop, hw, hh));
+        }
+        for (Shelf.Item it : pool) {
+            shelfSource.fetchPicture(it.image, sizes[0][0], sizes[0][1]);
+            shelfSource.fetchPicture(it.backdrop, hw, hh);
+        }
+        shelfSource.prunePictures(keys);
     }
 
     // ------------------------------------------------------------------ keeping fresh

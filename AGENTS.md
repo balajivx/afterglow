@@ -25,7 +25,7 @@ it. Without it the shelf stays empty and everything else works.
 | `Backdrop.java` | The scene: aurora ribbons, stars, hero backdrop, glow; `SceneView` (half resolution); `Glass` (frosted, quarter resolution, RenderEffect on Android 12+) |
 | `BentoView.java` | Clock card: dial, greeting/time, sky tile, sentence line |
 | `Weather.java` | Open-Meteo forecast, WMO codes to words and Phosphor glyphs, cache |
-| `Shelf.java` | "New and top rated on your apps": TMDB queries (`LANGUAGES`, `SERVICES`, two-week window, no animation/kids), poster views, shelf layout (6 posters) |
+| `Shelf.java` | "New and top rated on your apps": TMDB queries (`LANGUAGES`, `SERVICES`, two-week window, no animation/kids) building a pool of up to `POOL` titles, dealt into sets of 6 by `sets()`; poster views; `ShelfButton` (‹ › ↻ in the head); shelf layout |
 | `Sports.java` | Flip card: Arsenal and India (TheSportsDB, key `123`), F1 (Jolpica); faces `MatchTile`, `RaceTile`; `CardView` flips on Left/Right |
 | `DockView.java` | App grid (rows of `columns`), drawn covers (`BRANDS` colours), focus routing inside the grid |
 | `ArtView.java` | Base for focusable pictures: fine ring, colour change, nothing grows |
@@ -38,6 +38,8 @@ Resources: `res/values/config.xml` (dock order, hidden apps, weather place, colu
 
 ## Rules this design keeps
 
+- The shelf pages through its sets with ‹ › and refetches with ↻ (`MainActivity.showSet`, `loadShelf(true)`);
+  Up from a poster reaches those buttons, Up again the sports card.
 - Focus is a colour change plus a 1 dp ring. Nothing grows, lifts or slides (the sports card's flip and
   the page lift for lower dock rows are the only motions, both on purpose).
 - The screen is 960 x 540 dp. Positions are in `activity_main.xml`.

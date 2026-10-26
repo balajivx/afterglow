@@ -24,6 +24,10 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
 
 /**
@@ -31,8 +35,8 @@ import java.util.Set;
  * (a movie in cinemas or on streaming in India; a show's series or its current season), streaming in India
  * on the apps this TV has. No animation (anime, cartoons) and no kids' shows. English and Telugu come
  * first, taken in turn, Hindi fills what's left. Within a language: rated titles (5+ votes) best rated
- * first, anything rated below 6.0 left out; then titles too new to be rated, most popular first. Six
- * posters, at most three from one app.
+ * first, anything rated below 6.0 left out; then titles too new to be rated, most popular first. They
+ * come in sets of six posters, at most three from one app in a set, paged with the arrows over the shelf.
  *
  * The token comes from the build (launcher/tmdb.properties). TMDB's streaming availability is supplied by
  * JustWatch, and TMDB's terms ask that JustWatch be credited for it; nothing here talks to JustWatch.
@@ -42,6 +46,8 @@ final class Shelf {
     }
 
     static final int COUNT = 6;
+    /** At most this many titles to page through, from the first [MAX_ASKED] looked up. */
+    static final int POOL = 30, MAX_ASKED = 80;
 
     static final class Item {
         final String title, meta, image, backdrop, pkg;
@@ -177,6 +183,10 @@ final class Shelf {
         return out;
     }
 
+    /**
+     * Every title that qualifies, best first (up to [POOL]), for the sets of six the shelf pages through.
+     * TMDB answers in about a second, so the languages and then the titles are asked six at a time.
+     */
     static List<Item> fetch(String token, Set<String> installed, long now) throws IOException {
         Map<Integer, Service> providers = new HashMap<>();
         for (Service s : SERVICES) if (installed.contains(s.pkg)) providers.put(s.tmdbId, s);
@@ -185,82 +195,133 @@ final class Shelf {
         f.setTimeZone(Weather.ZONE);
         Calendar cal = Calendar.getInstance(Weather.ZONE);
         cal.setTimeInMillis(now);
-        String today = f.format(cal.getTime());
+        final String today = f.format(cal.getTime());
         cal.add(Calendar.DAY_OF_MONTH, -14);
-        String since = f.format(cal.getTime());
-        String ids = TextUtils.join("|", providers.keySet());
+        final String since = f.format(cal.getTime());
+        final String ids = TextUtils.join("|", providers.keySet());
 
-        // English and Telugu in turn, then Hindi.
-        List<List<JSONObject>> first = new ArrayList<>(), then = new ArrayList<>();
-        List<String> firstNames = new ArrayList<>(), thenNames = new ArrayList<>();
-        for (String[] l : LANGUAGES) {
-            List<JSONObject> c = candidates(token, l[0], ids, since, today);
-            (l[2].equals("0") ? first : then).add(c);
-            (l[2].equals("0") ? firstNames : thenNames).add(l[1]);
-        }
-        List<JSONObject> order = new ArrayList<>();
-        List<String> langOf = new ArrayList<>();
-        for (int i = 0; ; i++) {
-            boolean any = false;
-            for (int k = 0; k < first.size(); k++) {
-                if (i < first.get(k).size()) {
-                    order.add(first.get(k).get(i));
-                    langOf.add(firstNames.get(k));
-                    any = true;
-                }
-            }
-            if (!any) break;
-        }
-        for (int k = 0; k < then.size(); k++) {
-            for (JSONObject o : then.get(k)) {
-                order.add(o);
-                langOf.add(thenNames.get(k));
-            }
-        }
+        ExecutorService pool = Executors.newFixedThreadPool(6);
+        try {
+            List<Future<List<JSONObject>>> asked = new ArrayList<>();
+            for (String[] l : LANGUAGES) asked.add(pool.submit(() -> candidates(token, l[0], ids, since, today)));
 
-        // Check each in that order (one call: details with where it streams) until six; three per app at most.
-        List<Item> out = new ArrayList<>();
-        Map<Service, Integer> perApp = new HashMap<>();
-        int asked = 0;
-        for (int i = 0; i < order.size() && out.size() < COUNT && asked < 40; i++) {
-            JSONObject r = order.get(i);
-            String type = r.optString("_type");
-            boolean tv = type.equals("tv");
-            asked++;
-            JSONObject d = tmdb(token, "/" + type + "/" + r.optInt("id"), Collections.singletonMap("append_to_response", "watch/providers"));
-            int season = 0;
-            if (tv) {
-                // The series, or the season now airing, must have begun in the last two weeks.
-                JSONObject last = d.optJSONObject("last_episode_to_air");
-                season = last == null ? 0 : last.optInt("season_number");
-                String began = null;
-                JSONArray seasons = d.optJSONArray("seasons");
-                for (int k = 0; seasons != null && k < seasons.length(); k++) {
-                    JSONObject sn = seasons.optJSONObject(k);
-                    if (sn != null && sn.optInt("season_number") == season) began = sn.optString("air_date", null);
-                }
-                if (began == null || began.isEmpty() || began.compareTo(since) < 0) continue;
+            // English and Telugu in turn, then Hindi.
+            List<List<JSONObject>> first = new ArrayList<>(), then = new ArrayList<>();
+            List<String> firstNames = new ArrayList<>(), thenNames = new ArrayList<>();
+            for (int k = 0; k < LANGUAGES.length; k++) {
+                String[] l = LANGUAGES[k];
+                (l[2].equals("0") ? first : then).add(result(asked.get(k)));
+                (l[2].equals("0") ? firstNames : thenNames).add(l[1]);
             }
-            JSONObject wp = d.optJSONObject("watch/providers");
-            JSONObject res = wp == null ? null : wp.optJSONObject("results");
-            JSONObject in = res == null ? null : res.optJSONObject("IN");
-            Service app = null;
-            for (String kind : new String[]{"flatrate", "free", "ads"}) {
-                JSONArray offers = in == null ? null : in.optJSONArray(kind);
-                for (int k = 0; offers != null && k < offers.length() && app == null; k++) {
-                    app = providers.get(offers.optJSONObject(k).optInt("provider_id"));
+            List<JSONObject> order = new ArrayList<>();
+            List<String> langOf = new ArrayList<>();
+            for (int i = 0; ; i++) {
+                boolean any = false;
+                for (int k = 0; k < first.size(); k++) {
+                    if (i < first.get(k).size()) {
+                        order.add(first.get(k).get(i));
+                        langOf.add(firstNames.get(k));
+                        any = true;
+                    }
+                }
+                if (!any) break;
+            }
+            for (int k = 0; k < then.size(); k++) {
+                for (JSONObject o : then.get(k)) {
+                    order.add(o);
+                    langOf.add(thenNames.get(k));
                 }
             }
-            if (app == null) continue;
-            int n = perApp.containsKey(app) ? perApp.get(app) : 0;
-            if (n >= 3) continue;
-            perApp.put(app, n + 1);
-            String rating = rated(r) ? String.format(Locale.US, "★ %.1f", r.optDouble("vote_average", 0)) : "New";
-            String kind = !tv ? "Movie" : "S" + Math.max(1, season);
-            out.add(new Item(r.optString(tv ? "name" : "title"), rating + " · " + langOf.get(i) + "\n" + app.name + " · " + kind,
-                    "https://image.tmdb.org/t/p/w342" + r.optString("poster_path"),
-                    "https://image.tmdb.org/t/p/w1280" + r.optString("backdrop_path"), app.pkg));
+
+            // Each title's details with where it streams, all at once; then kept in that order.
+            List<Future<JSONObject>> details = new ArrayList<>();
+            for (int i = 0; i < order.size() && i < MAX_ASKED; i++) {
+                JSONObject r = order.get(i);
+                details.add(pool.submit(() -> tmdb(token, "/" + r.optString("_type") + "/" + r.optInt("id"),
+                        Collections.singletonMap("append_to_response", "watch/providers"))));
+            }
+            List<Item> out = new ArrayList<>();
+            for (int i = 0; i < details.size() && out.size() < POOL; i++) {
+                JSONObject r = order.get(i);
+                JSONObject d;
+                try {
+                    d = result(details.get(i));
+                } catch (IOException e) {
+                    continue; // one title that didn't answer
+                }
+                Item it = item(r, d, langOf.get(i), providers, since);
+                if (it != null) out.add(it);
+            }
+            return out;
+        } finally {
+            pool.shutdownNow();
         }
+    }
+
+    private static <T> T result(Future<T> f) throws IOException {
+        try {
+            return f.get(40, TimeUnit.SECONDS);
+        } catch (java.util.concurrent.ExecutionException e) {
+            throw e.getCause() instanceof IOException ? (IOException) e.getCause() : new IOException(e.getCause());
+        } catch (InterruptedException | java.util.concurrent.TimeoutException e) {
+            throw new IOException("TMDB took too long", e);
+        }
+    }
+
+    /** The poster for [r] given its details [d], or null if it isn't new enough or isn't on this TV's apps. */
+    private static Item item(JSONObject r, JSONObject d, String lang, Map<Integer, Service> providers, String since) {
+        boolean tv = r.optString("_type").equals("tv");
+        int season = 0;
+        if (tv) {
+            // The series, or the season now airing, must have begun in the last two weeks.
+            JSONObject last = d.optJSONObject("last_episode_to_air");
+            season = last == null ? 0 : last.optInt("season_number");
+            String began = null;
+            JSONArray seasons = d.optJSONArray("seasons");
+            for (int k = 0; seasons != null && k < seasons.length(); k++) {
+                JSONObject sn = seasons.optJSONObject(k);
+                if (sn != null && sn.optInt("season_number") == season) began = sn.optString("air_date", null);
+            }
+            if (began == null || began.isEmpty() || began.compareTo(since) < 0) return null;
+        }
+        JSONObject wp = d.optJSONObject("watch/providers");
+        JSONObject res = wp == null ? null : wp.optJSONObject("results");
+        JSONObject in = res == null ? null : res.optJSONObject("IN");
+        Service app = null;
+        for (String kind : new String[]{"flatrate", "free", "ads"}) {
+            JSONArray offers = in == null ? null : in.optJSONArray(kind);
+            for (int k = 0; offers != null && k < offers.length() && app == null; k++) {
+                app = providers.get(offers.optJSONObject(k).optInt("provider_id"));
+            }
+        }
+        if (app == null) return null;
+        String rating = rated(r) ? String.format(Locale.US, "★ %.1f", r.optDouble("vote_average", 0)) : "New";
+        String kind = !tv ? "Movie" : "S" + Math.max(1, season);
+        return new Item(r.optString(tv ? "name" : "title"), rating + " · " + lang + "\n" + app.name + " · " + kind,
+                "https://image.tmdb.org/t/p/w342" + r.optString("poster_path"),
+                "https://image.tmdb.org/t/p/w1280" + r.optString("backdrop_path"), app.pkg);
+    }
+
+    /**
+     * [pool] dealt into sets of six in order, at most three from one app in a set: each title goes into the
+     * first set with room for it. A last set of fewer than three is left out.
+     */
+    static List<List<Item>> sets(List<Item> pool) {
+        List<List<Item>> out = new ArrayList<>();
+        for (Item it : pool) {
+            List<Item> home = null;
+            for (List<Item> set : out) {
+                int same = 0;
+                for (Item o : set) if (o.pkg.equals(it.pkg)) same++;
+                if (set.size() < COUNT && same < 3) {
+                    home = set;
+                    break;
+                }
+            }
+            if (home == null) out.add(home = new ArrayList<>());
+            home.add(it);
+        }
+        for (int i = out.size() - 1; i > 0 && out.get(i).size() < 3; i--) out.remove(i);
         return out;
     }
 
@@ -306,7 +367,7 @@ final class Shelf {
         }
 
         private static String sourceName() {
-            return "TMDB_FRESH2";
+            return "TMDB_POOL1";
         }
 
         long age(long now) {
@@ -358,6 +419,23 @@ final class Shelf {
                 return b;
             } catch (IOException e) {
                 return null;
+            } finally {
+                part.delete();
+            }
+        }
+
+        /** Puts the picture at [url], cut to [w] x [h] px, on disk if it isn't there yet. */
+        void fetchPicture(String url, int w, int h) {
+            String key = Net.keyFor(url, w, h);
+            pictures.mkdirs();
+            File kept = new File(pictures, key + ".jpg");
+            if (kept.isFile()) return;
+            File part = new File(pictures, key + ".part");
+            try {
+                Net.download(url, part);
+                Bitmap b = Net.decodeFile(part, w, h);
+                if (b != null) Net.save(b, kept);
+            } catch (IOException ignored) {
             } finally {
                 part.delete();
             }
@@ -452,16 +530,81 @@ final class Shelf {
     }
 
     /**
+     * A small round button by the shelf's head: a glyph on a faint disc. Focus is the disc brightening and
+     * the fine ring, as everywhere; a button with nothing to do dims its glyph. [spin] turns the glyph
+     * while the shelf is being refreshed.
+     */
+    static final class ShelfButton extends ArtView {
+        private final Paint fillP = new Paint(Paint.ANTI_ALIAS_FLAG), glyphP = new Paint(Paint.FILTER_BITMAP_FLAG);
+        private final Bitmap glyph;
+        private final int glyphSize;
+        private final Ui.Tween live = new Ui.Tween(1f);
+        private boolean spinning;
+        private long spinStart;
+
+        ShelfButton(Context c, int glyphRes, String label) {
+            super(c);
+            glyphSize = Ui.dpi(c, 12f);
+            glyph = Ui.glyph(c, glyphRes, glyphSize);
+            setContentDescription(label);
+        }
+
+        static float diameter(Context c) {
+            return Ui.dp(c, 22f);
+        }
+
+        void setLive(boolean on) {
+            live.to(on ? 1f : 0f, 200);
+            invalidate();
+        }
+
+        void spin(boolean on) {
+            if (on == spinning) return;
+            spinning = on;
+            spinStart = Ui.now();
+            invalidate();
+        }
+
+        @Override
+        protected void onSizeChanged(int w, int h, int ow, int oh) {
+            float d = w - 2 * ringSpace;
+            placeArt(ringSpace, ringSpace, d, d, d / 2f);
+        }
+
+        @Override
+        protected void drawEmptyArt(Canvas canvas, float focused) {
+            boolean moving = live.step();
+            fillP.setColor(Ui.mix(Ui.BAND, 0x33FFFFFF, focused));
+            canvas.drawRoundRect(art, radius, radius, fillP);
+            glyphP.setColor(Ui.mix(Ui.TEXT_2, Ui.TEXT, focused));
+            glyphP.setAlpha(Math.round(255 * (0.3f + 0.7f * live.value)));
+            int save = canvas.save();
+            if (spinning) {
+                canvas.rotate((Ui.now() - spinStart) % 900 / 900f * 360f, art.centerX(), art.centerY());
+                moving = true;
+            }
+            canvas.drawBitmap(glyph, art.centerX() - glyphSize / 2f, art.centerY() - glyphSize / 2f, glyphP);
+            canvas.restoreToCount(save);
+            if (moving) postInvalidateOnAnimation();
+        }
+    }
+
+    /**
      * The shelf: its head (left) and the data's credit (right) over six posters in equal columns, 16 apart,
      * their art one height so the titles share a line. It reaches a ring's width past its slot so focus
      * rings stay inside it.
      */
     static final class ShelfView extends ViewGroup {
         final List<PosterView> posters = new ArrayList<>();
+        /** Over the posters, after the head: the previous set, the next set, and fresh titles. */
+        final ShelfButton prev, next, refresh;
+        private final List<ShelfButton> buttons;
+        private int lastButton = 1;
         final int overhang;
-        private final TextPaint headP, creditP;
-        private String head = "", credit = "";
-        private float creditWidth, headBase;
+        private final TextPaint headP, creditP, pageP;
+        private String head = "", credit = "", page = "", note = "";
+        private float creditWidth, headBase, pageLeft, noteLeft;
+        private final Ui.Tween noteIn = new Ui.Tween(0f);
         /** Where Down goes from a poster, and Up. */
         java.util.function.Supplier<View> below, above;
         private int lastFocused;
@@ -473,12 +616,21 @@ final class Shelf {
                 posters.add(p);
                 addView(p);
             }
+            prev = new ShelfButton(c, R.drawable.ph_caret_left_bold, "Previous set");
+            next = new ShelfButton(c, R.drawable.ph_caret_right_bold, "Next set");
+            refresh = new ShelfButton(c, R.drawable.ph_arrow_clockwise_bold, "Fresh titles");
+            buttons = java.util.Arrays.asList(prev, next, refresh);
+            for (ShelfButton b : buttons) {
+                addView(b);
+                b.setVisibility(INVISIBLE);
+            }
             overhang = Math.round(posters.get(0).ringSpace);
             headP = Ui.textPaint(c, Ui.semibold(c), Ui.T_LABEL, Ui.TEXT_2, 0f, false);
+            pageP = Ui.textPaint(c, Ui.medium(c), Ui.T_CAPTION, Ui.TEXT_2, 0f, true);
             creditP = Ui.textPaint(c, Ui.medium(c), Ui.T_CAPTION, Ui.TEXT_2, 0.012f, false);
             creditP.setAlpha(Math.round(255 * 0.7f));
             setWillNotDraw(false);
-            setClipChildren(true);
+            setClipChildren(false); // the buttons' rings reach a little above the shelf
             setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);
         }
 
@@ -486,7 +638,36 @@ final class Shelf {
             this.head = head;
             this.credit = credit;
             creditWidth = creditP.measureText(credit);
+            requestLayout();
             invalidate();
+        }
+
+        /** Shows the buttons with "[at] / [of]" between the arrows (of 0: no buttons yet). */
+        void setPage(int at, int of) {
+            for (ShelfButton b : buttons) b.setVisibility(of > 0 ? VISIBLE : INVISIBLE);
+            if (of <= 0 && buttons.contains(findFocus())) lastFocused().requestFocus();
+            page = of > 0 ? (at + 1) + " / " + of : "";
+            prev.setLive(at > 0);
+            next.setLive(at + 1 < of);
+            invalidate();
+        }
+
+        /** A word after the buttons ("Up to date") that fades away after a few seconds. */
+        void note(String text) {
+            note = text;
+            noteIn.snap(1f);
+            invalidate();
+            removeCallbacks(fadeNote);
+            postDelayed(fadeNote, 3500);
+        }
+
+        private final Runnable fadeNote = () -> {
+            noteIn.to(0f, 600);
+            invalidate();
+        };
+
+        View lastButton() {
+            return buttons.get(lastButton).getVisibility() == VISIBLE ? buttons.get(lastButton) : null;
         }
 
         PosterView lastFocused() {
@@ -523,6 +704,8 @@ final class Shelf {
                 p.measure(MeasureSpec.makeMeasureSpec(Math.round(g.widths[i] + 2 * overhang), MeasureSpec.EXACTLY),
                         MeasureSpec.makeMeasureSpec(Math.round(overhang + g.artHeight + PosterView.textHeight(getContext())), MeasureSpec.EXACTLY));
             }
+            int size = MeasureSpec.makeMeasureSpec(Math.round(ShelfButton.diameter(getContext()) + 2 * overhang), MeasureSpec.EXACTLY);
+            for (ShelfButton b : buttons) b.measure(size, size);
         }
 
         @Override
@@ -533,7 +716,21 @@ final class Shelf {
                 int x = Math.round(g.lefts[i]), y = Math.round(g.artTop);
                 p.layout(x, y, x + p.getMeasuredWidth(), y + p.getMeasuredHeight());
             }
-            headBase = Ui.baselineIn(headP, overhang, Ui.dp(getContext(), Ui.T_LABEL * 1.3f));
+            Context c = getContext();
+            float line = Ui.dp(c, Ui.T_LABEL * 1.3f);
+            headBase = Ui.baselineIn(headP, overhang, line);
+            // In the head's line, after it: [<] 1 / 3 [>]  [refresh]  note
+            int size = Math.round(ShelfButton.diameter(c) + 2 * overhang);
+            float mid = overhang + line / 2f, x = overhang + headP.measureText(head) + Ui.dp(c, Ui.S3);
+            int top = Math.round(mid - size / 2f);
+            float pageW = pageP.measureText("88 / 88");
+            float[] lefts = {x, x + size + Ui.dp(c, Ui.S1) + pageW, x + 2 * size + Ui.dp(c, Ui.S1 + Ui.S2) + pageW};
+            pageLeft = x + size - overhang + Ui.dp(c, Ui.S1) / 2f;
+            noteLeft = lefts[2] + size + Ui.dp(c, Ui.S1);
+            for (int i = 0; i < buttons.size(); i++) {
+                int left = Math.round(lefts[i] - overhang);
+                buttons.get(i).layout(left, top, left + size, top + size);
+            }
         }
 
         @Override
@@ -541,6 +738,8 @@ final class Shelf {
             super.requestChildFocus(child, focused);
             int i = posters.indexOf(child);
             if (i >= 0) lastFocused = i;
+            int b = buttons.indexOf(child);
+            if (b >= 0) lastButton = b;
         }
 
         @Override
@@ -553,9 +752,23 @@ final class Shelf {
                     case FOCUS_RIGHT:
                         return i + 1 < COUNT && posters.get(i + 1).getVisibility() == VISIBLE ? posters.get(i + 1) : focused;
                     case FOCUS_UP:
+                        if (lastButton() != null) return lastButton();
                         return above != null && above.get() != null ? above.get() : focused;
                     case FOCUS_DOWN:
                         return below != null && below.get() != null ? below.get() : focused;
+                }
+            }
+            int b = buttons.indexOf(focused);
+            if (b >= 0) {
+                switch (direction) {
+                    case FOCUS_LEFT:
+                        return b > 0 ? buttons.get(b - 1) : focused;
+                    case FOCUS_RIGHT:
+                        return b + 1 < buttons.size() ? buttons.get(b + 1) : focused;
+                    case FOCUS_UP:
+                        return above != null && above.get() != null ? above.get() : focused;
+                    case FOCUS_DOWN:
+                        return lastFocused();
                 }
             }
             return super.focusSearch(focused, direction);
@@ -565,6 +778,17 @@ final class Shelf {
         protected void onDraw(Canvas canvas) {
             canvas.drawText(head, overhang, headBase, headP);
             if (!credit.isEmpty()) canvas.drawText(credit, getWidth() - overhang - creditWidth, headBase, creditP);
+            if (!page.isEmpty()) {
+                float w = pageP.measureText(page), room = pageP.measureText("88 / 88");
+                canvas.drawText(page, pageLeft + (room - w) / 2f, headBase, pageP);
+            }
+            boolean moving = noteIn.step();
+            if (noteIn.value > 0f && !note.isEmpty()) {
+                pageP.setAlpha(Math.round(255 * noteIn.value));
+                canvas.drawText(note, noteLeft, headBase, pageP);
+                pageP.setAlpha(255);
+            }
+            if (moving) postInvalidateOnAnimation();
         }
     }
 }

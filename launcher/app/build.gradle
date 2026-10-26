@@ -13,8 +13,8 @@ android {
         applicationId "com.balaji.tvhome"
         minSdk 26
         targetSdk 34
-        versionCode 7
-        versionName "7.0"
+        versionCode 8
+        versionName "8.0"
         buildConfigField "String", "TMDB_TOKEN", "\"${tmdb.getProperty("tmdb.token", "")}\""
     }
     buildFeatures { buildConfig true }

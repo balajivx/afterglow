@@ -1,0 +1,13 @@
+# Secrets and machine-specific settings
+launcher/tmdb.properties
+launcher/local.properties
+*.keystore
+*.jks
+
+# Build output
+build/
+launcher/app/build/
+launcher/.gradle/
+launcher/build/
+*.apk
+.DS_Store

@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The layout, in dp (the TV is 960 x 540 dp): the scene behind everything, the clock card top left,
+     the sports card top right, the shelf under them across the full width, and the app dock along the
+     bottom in rows of six. Each slot is filled in code. -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@android:color/black"
+    android:clipChildren="false">
+
+    <FrameLayout
+        android:id="@+id/sceneSlot"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+
+    <!-- Moves up as a whole when focus goes to a lower row of the dock; fades out at the bottom edge. -->
+    <com.balaji.tvhome.FadeFrame
+        android:id="@+id/content"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:clipChildren="false">
+
+        <FrameLayout
+            android:id="@+id/bentoSlot"
+            android:layout_width="232dp"
+            android:layout_height="89dp"
+            android:layout_marginStart="56dp"
+            android:layout_marginTop="32dp"
+            android:clipChildren="false" />
+
+        <!-- Sports: one card, Arsenal / India cricket / F1, top right; the clock card's size, mirrored. -->
+        <FrameLayout
+            android:id="@+id/sportsSlot"
+            android:layout_width="232dp"
+            android:layout_height="89dp"
+            android:layout_marginStart="672dp"
+            android:layout_marginTop="32dp"
+            android:clipChildren="false" />
+
+        <FrameLayout
+            android:id="@+id/shelfSlot"
+            android:layout_width="848dp"
+            android:layout_height="270.6dp"
+            android:layout_marginStart="56dp"
+            android:layout_marginTop="133dp"
+            android:clipChildren="false" />
+
+        <FrameLayout
+            android:id="@+id/dockSlot"
+            android:layout_width="848dp"
+            android:layout_height="84.4dp"
+            android:layout_marginStart="56dp"
+            android:layout_marginTop="423.6dp"
+            android:clipChildren="false" />
+    </com.balaji.tvhome.FadeFrame>
+</FrameLayout>

@@ -1,0 +1,26 @@
+plugins { id "com.android.application" }
+
+// The TMDB read access token lives in launcher/tmdb.properties (tmdb.token=...), kept out of the source.
+// Without it the shelf uses JustWatch.
+def tmdb = new Properties()
+def tmdbFile = rootProject.file("tmdb.properties")
+if (tmdbFile.exists()) tmdbFile.withInputStream { tmdb.load(it) }
+
+android {
+    namespace "com.balaji.tvhome"
+    compileSdk 34
+    defaultConfig {
+        applicationId "com.balaji.tvhome"
+        minSdk 26
+        targetSdk 34
+        versionCode 7
+        versionName "7.0"
+        buildConfigField "String", "TMDB_TOKEN", "\"${tmdb.getProperty("tmdb.token", "")}\""
+    }
+    buildFeatures { buildConfig true }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+

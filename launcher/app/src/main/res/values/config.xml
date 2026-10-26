@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Background effects. 2 = full (60 fps drift, blur), 1 = reduced (the drift steps 8 times a
+         second; blur and glow stay), 0 = off (still background, no blur).
+         Set to 1 on 2026-10-26: this Bravia has 2.9 GB of RAM but only about 1.2 GB available. -->
+    <integer name="effects">1</integer>
+
+    <!-- Apps per row in the dock. -->
+    <integer name="columns">6</integer>
+
+    <!-- The dock holds every app. These lead, in order (package names); missing apps are skipped. -->
+    <string-array name="dock_apps">
+        <item>com.netflix.ninja</item>
+        <item>com.amazon.amazonvideo.livingroom</item>
+        <item>org.smarttube.stable</item>
+        <item>in.startv.hotstar</item>
+        <item>ahaflix.tv</item>
+        <item>com.cricfytv.sports</item>
+    </string-array>
+
+    <!-- Weather card location (Open-Meteo; change to your town) -->
+    <string name="weather_lat">17.385</string>
+    <string name="weather_lon">78.487</string>
+    <string name="weather_place">Hyderabad</string>
+
+    <!-- These follow the apps above, in order; every other app follows A to Z. -->
+    <string-array name="grid_apps">
+        <item>com.sonyliv</item>
+        <item>com.graymatrix.did</item>
+        <item>com.google.android.youtube.tv</item>
+        <item>com.yablio.sendfilestotv</item>
+        <item>com.android.vending</item>
+        <item>com.sony.dtv.tvx</item>
+    </string-array>
+
+    <!-- Apps to hide from the grid (they stay installed). Example:
+         <item>com.sony.dtv.timers</item> -->
+    <string-array name="hidden_apps">
+        <item>com.sony.dtv.notificationcenter</item>
+        <item>com.sony.dtv.ecodashboard</item>
+        <item>com.sony.dtv.smarthelp</item>
+        <item>com.sony.dtv.smartmediaapp</item>
+        <item>com.sony.dtv.livingfit</item>
+        <item>com.sony.dtv.seeds.iot</item>
+        <item>com.sony.dtv.osat.music</item>
+        <item>com.sony.dtv.timers</item>
+        <item>com.google.android.videos</item>
+    </string-array>
+</resources>

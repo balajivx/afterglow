@@ -33,8 +33,8 @@ import java.util.concurrent.TimeUnit;
 /**
  * "New and top rated on your apps", from TMDB only: movies and shows released in the last two weeks
  * (a movie in cinemas or on streaming in India; a show's series or its current season), streaming in India
- * on the apps this TV has. No animation (anime, cartoons) and no kids' shows. English and Telugu come
- * first, taken in turn, Hindi fills what's left. Within a language: rated titles (5+ votes) best rated
+ * on the apps this TV has. No animation (anime, cartoons) and no kids' shows. Half the titles are
+ * Telugu, 35% English and 15% Hindi (others fill in when a language has too few). Within a language: rated titles (5+ votes) best rated
  * first, anything rated below 6.0 left out; then titles too new to be rated, most popular first. They
  * come in sets of six posters, at most three from one app in a set, paged with the arrows over the shelf.
  *
@@ -84,11 +84,11 @@ final class Shelf {
 
     // ---- Languages, in the order this home watches them
 
-    /** TMDB language code, the name shown, the tier (0 first, taken in turn; 1 fills what's left). */
+    /** TMDB language code, the name shown, its share of the shelf in percent. */
     private static final String[][] LANGUAGES = {
-            {"en", "English", "0"},
-            {"te", "Telugu", "0"},
-            {"hi", "Hindi", "1"},
+            {"te", "Telugu", "50"},
+            {"en", "English", "35"},
+            {"hi", "Hindi", "15"},
     };
 
     // ---- TMDB
@@ -186,6 +186,7 @@ final class Shelf {
     /**
      * Every title that qualifies, best first (up to [POOL]), for the sets of six the shelf pages through.
      * TMDB answers in about a second, so the languages and then the titles are asked six at a time.
+     * The pool keeps [LANGUAGES]' shares in order, so each set of six does too.
      */
     static List<Item> fetch(String token, Set<String> installed, long now) throws IOException {
         Map<Integer, Service> providers = new HashMap<>();
@@ -205,52 +206,49 @@ final class Shelf {
             List<Future<List<JSONObject>>> asked = new ArrayList<>();
             for (String[] l : LANGUAGES) asked.add(pool.submit(() -> candidates(token, l[0], ids, since, today)));
 
-            // English and Telugu in turn, then Hindi.
-            List<List<JSONObject>> first = new ArrayList<>(), then = new ArrayList<>();
-            List<String> firstNames = new ArrayList<>(), thenNames = new ArrayList<>();
-            for (int k = 0; k < LANGUAGES.length; k++) {
-                String[] l = LANGUAGES[k];
-                (l[2].equals("0") ? first : then).add(result(asked.get(k)));
-                (l[2].equals("0") ? firstNames : thenNames).add(l[1]);
+            // Each language's titles checked (details with where it streams, all at once), best first.
+            int n = LANGUAGES.length;
+            List<List<JSONObject>> found = new ArrayList<>();
+            List<List<Future<JSONObject>>> details = new ArrayList<>();
+            for (int k = 0; k < n; k++) {
+                List<JSONObject> c = result(asked.get(k));
+                found.add(c);
+                List<Future<JSONObject>> d = new ArrayList<>();
+                for (int i = 0; i < c.size() && i < MAX_ASKED / n; i++) {
+                    JSONObject r = c.get(i);
+                    d.add(pool.submit(() -> tmdb(token, "/" + r.optString("_type") + "/" + r.optInt("id"),
+                            Collections.singletonMap("append_to_response", "watch/providers"))));
+                }
+                details.add(d);
             }
-            List<JSONObject> order = new ArrayList<>();
-            List<String> langOf = new ArrayList<>();
-            for (int i = 0; ; i++) {
-                boolean any = false;
-                for (int k = 0; k < first.size(); k++) {
-                    if (i < first.get(k).size()) {
-                        order.add(first.get(k).get(i));
-                        langOf.add(firstNames.get(k));
-                        any = true;
+            List<List<Item>> byLang = new ArrayList<>();
+            for (int k = 0; k < n; k++) {
+                List<Item> q = new ArrayList<>();
+                for (int i = 0; i < details.get(k).size(); i++) {
+                    try {
+                        Item it = item(found.get(k).get(i), result(details.get(k).get(i)), LANGUAGES[k][1], providers, since);
+                        if (it != null) q.add(it);
+                    } catch (IOException ignored) {
+                        // one title that didn't answer
                     }
                 }
-                if (!any) break;
-            }
-            for (int k = 0; k < then.size(); k++) {
-                for (JSONObject o : then.get(k)) {
-                    order.add(o);
-                    langOf.add(thenNames.get(k));
-                }
+                byLang.add(q);
             }
 
-            // Each title's details with where it streams, all at once; then kept in that order.
-            List<Future<JSONObject>> details = new ArrayList<>();
-            for (int i = 0; i < order.size() && i < MAX_ASKED; i++) {
-                JSONObject r = order.get(i);
-                details.add(pool.submit(() -> tmdb(token, "/" + r.optString("_type") + "/" + r.optInt("id"),
-                        Collections.singletonMap("append_to_response", "watch/providers"))));
-            }
+            // Mixed by share: each place goes to the language furthest below its share so far (Telugu,
+            // English, Hindi, Telugu, English, Telugu: three, two and one in every six). When a language
+            // runs out, the others fill its places.
             List<Item> out = new ArrayList<>();
-            for (int i = 0; i < details.size() && out.size() < POOL; i++) {
-                JSONObject r = order.get(i);
-                JSONObject d;
-                try {
-                    d = result(details.get(i));
-                } catch (IOException e) {
-                    continue; // one title that didn't answer
+            int[] taken = new int[n];
+            while (out.size() < POOL) {
+                int pick = -1;
+                for (int k = 0; k < n; k++) {
+                    if (taken[k] >= byLang.get(k).size()) continue;
+                    double share = Double.parseDouble(LANGUAGES[k][2]);
+                    if (pick < 0 || taken[k] / share < taken[pick] / Double.parseDouble(LANGUAGES[pick][2])) pick = k;
                 }
-                Item it = item(r, d, langOf.get(i), providers, since);
-                if (it != null) out.add(it);
+                if (pick < 0) break;
+                out.add(byLang.get(pick).get(taken[pick]++));
             }
             return out;
         } finally {

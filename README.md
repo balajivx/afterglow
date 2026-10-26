@@ -20,8 +20,9 @@ a blue night with the cricket strip, a carbon-black race car finish. It tells yo
 time, counts down, and says **Live** while it's on.
 
 **🎬 New and top rated on your apps** (middle)
-Six shows and movies that came out in the last two weeks and are already streaming on the apps on your TV.
-English and Telugu first, Hindi after. The best rated lead; brand-new ones still waiting for ratings say
+Shows and movies that came out in the last two weeks and are already streaming on the apps on your TV, six at
+a time: page through the sets with ‹ › or press ↻ for the latest. About half are Telugu, 35% English and 15%
+Hindi. The best rated lead; brand-new ones still waiting for ratings say
 **New**. No cartoons or anime. Move onto a poster and its artwork softly fills the sky behind it.
 
 **📺 Your apps** (bottom)

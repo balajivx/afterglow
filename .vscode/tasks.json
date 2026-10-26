@@ -1,0 +1,17 @@
+{
+  // Terminal → Run Task… (or Cmd+Shift+B for the default build).
+  "version": "2.0.0",
+  "inputs": [
+    { "id": "tvIp", "type": "promptString", "description": "The TV's IP address (TV Settings → Network)", "default": "192.168.1.50" }
+  ],
+  "tasks": [
+    { "label": "Connect to TV", "type": "shell", "command": "adb connect ${input:tvIp}:5555 && adb devices", "problemMatcher": [] },
+    { "label": "Build", "type": "shell", "command": "./build.sh", "group": { "kind": "build", "isDefault": true }, "problemMatcher": [] },
+    { "label": "Install on TV", "type": "shell", "command": "./install.sh", "problemMatcher": [] },
+    { "label": "Build and install", "dependsOrder": "sequence", "dependsOn": ["Build", "Install on TV"], "problemMatcher": [] },
+    { "label": "Make it the TV's Home", "type": "shell", "command": "./activate.sh", "problemMatcher": [] },
+    { "label": "Screenshot from TV", "type": "shell", "command": "mkdir -p shots && adb exec-out screencap -p > shots/tv-$(date +%Y%m%d-%H%M%S).png && open shots", "problemMatcher": [] },
+    { "label": "Show crash log", "type": "shell", "command": "adb logcat -d -b crash | grep -A20 com.balaji.tvhome | tail -60", "problemMatcher": [] },
+    { "label": "Disconnect from TV", "type": "shell", "command": "adb disconnect", "problemMatcher": [] }
+  ]
+}

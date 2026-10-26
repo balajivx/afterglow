@@ -1,0 +1,11 @@
+{
+  // Java 17 from Homebrew (brew install openjdk@17). Change if yours lives elsewhere.
+  "java.jdt.ls.java.home": "/opt/homebrew/opt/openjdk@17",
+  "java.import.gradle.java.home": "/opt/homebrew/opt/openjdk@17",
+  "java.import.gradle.wrapper.enabled": true,
+  "java.configuration.updateBuildConfiguration": "automatic",
+  "files.exclude": {
+    "**/build": true,
+    "**/.gradle": true
+  }
+}

@@ -11,3 +11,6 @@ launcher/.gradle/
 launcher/build/
 *.apk
 .DS_Store
+
+# Screenshots taken with the "Screenshot from TV" task
+shots/

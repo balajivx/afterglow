@@ -52,34 +52,46 @@
          vivid, standard, cinema, game, graphics, photo, custom; brightness 0-50; contrast, color and
          sharpness 0-100; colorTemperature cool,
          neutral, warm, expert1, expert2; autoLocalDimming off, low, medium, high; lightSensor on, off.
-         Motionflow isn't in the API: each picture mode keeps its own, set once in the TV's menu (README).
-         Add hotkey_5 to hotkey_9 the same way; 0 shows what each key does. -->
+         motionflow (auto, custom, off) isn't in the API: the key sets it in Sony's picture menu, which
+         shows at the foot of the screen for a few seconds (the Apps settings only, while an app plays).
+         Smoothness and Clearness stay as set by hand (Sports: Smoothness 2, Clearness Min; Max made the
+         ball break up as Motionflow guessed at it).
+         Game mode keeps lag low by switching off Sony's motion processing, so Gaming sets no motionflow.
+         Add hotkey_6 to hotkey_9 the same way; 0 shows what each key does. -->
     <string-array name="hotkey_1">
         <item>Sports</item>
         <item>pictureMode=custom</item>
-        <item>brightness=50</item>
+        <item>brightness=46</item>
         <item>contrast=95</item>
         <item>color=65</item>
         <item>sharpness=55</item>
         <item>colorTemperature=cool</item>
         <item>autoLocalDimming=medium</item>
         <item>lightSensor=off</item>
+        <item>motionflow=custom</item>
     </string-array>
     <string-array name="hotkey_2">
         <item>Movies</item>
         <item>pictureMode=cinema</item>
-        <item>brightness=35</item>
-        <item>colorTemperature=expert1</item>
+        <item>brightness=42</item>
+        <item>contrast=95</item>
+        <item>color=58</item>
+        <item>sharpness=50</item>
+        <item>colorTemperature=neutral</item>
         <item>autoLocalDimming=high</item>
         <item>lightSensor=off</item>
+        <item>motionflow=auto</item>
     </string-array>
     <string-array name="hotkey_3">
-        <item>TV shows</item>
-        <item>pictureMode=standard</item>
-        <item>brightness=40</item>
+        <item>Gaming</item>
+        <item>pictureMode=game</item>
+        <item>brightness=50</item>
+        <item>contrast=95</item>
+        <item>color=60</item>
+        <item>sharpness=50</item>
         <item>colorTemperature=neutral</item>
         <item>autoLocalDimming=medium</item>
-        <item>lightSensor=on</item>
+        <item>lightSensor=off</item>
     </string-array>
     <string-array name="hotkey_4">
         <item>Night</item>
@@ -88,5 +100,18 @@
         <item>colorTemperature=expert1</item>
         <item>autoLocalDimming=low</item>
         <item>lightSensor=off</item>
+        <item>motionflow=off</item>
+    </string-array>
+    <string-array name="hotkey_5">
+        <item>Everyday</item>
+        <item>pictureMode=standard</item>
+        <item>brightness=46</item>
+        <item>contrast=95</item>
+        <item>color=60</item>
+        <item>sharpness=52</item>
+        <item>colorTemperature=neutral</item>
+        <item>autoLocalDimming=medium</item>
+        <item>lightSensor=off</item>
+        <item>motionflow=auto</item>
     </string-array>
 </resources>

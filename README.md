@@ -41,8 +41,9 @@ or grows.
 
 ## Picture keys (the remote's number keys)
 
-In any app, the number keys switch the picture: **1** Sports, **2** Movies, **3** TV shows, **4** Night, and
-**0** shows what each key does. A small card at the top says what changed. The profiles are in
+In any app, the number keys switch the picture: **1** Sports (cricket, football, F1), **2** Movies (and
+Netflix or Prime series), **3** Gaming, **4** Night, **5** Everyday (YouTube, TV), and **0** shows what
+each key does. A small card at the top says what changed. The profiles are in
 `launcher/app/src/main/res/values/config.xml` (`hotkey_1`…), so you can change them or add 5 to 9.
 
 They use Sony's IP control on the TV itself, which needs a key, once:
@@ -52,13 +53,16 @@ They use Sony's IP control on the TV itself, which needs a key, once:
 2. Put the same word in `launcher/tmdb.properties` as `bravia.psk=yourword`, then **Build and install**.
 3. Run `./hotkeys.sh` once (turns the keys on; or TV Settings → Accessibility → Afterglow picture keys).
 
-Motionflow (how smooth fast motion looks) isn't reachable through Sony's IP control, but every picture mode
-remembers its own. The TV keeps separate picture settings per input: set these **while an app is playing**
-(the Picture menu then says **Apps** under its title). Opened from the home screen, the menu can go to HDMI 1
-instead, which the keys don't touch. Set it once per mode in the TV's menu (Picture → Advanced settings → Motion), after
-pressing the key that picks that mode (this X85J offers Auto, Custom and Off): **1 Sports (Custom mode):
-Motionflow Custom, Smoothness at the highest step, Clearness at Min**; 2 Movies and 4 Night (Cinema mode):
-Off (or Auto if pans look jerky); 3 TV shows (Standard): Auto.
+The keys also set **Motionflow** (how smooth fast motion looks): 1 Sports **Custom**, 2 Movies and 5 Everyday
+**Auto**, 4 Night **Off**. 3 Gaming uses Sony's Game mode, which turns motion processing off itself to keep
+input lag low. For a console on HDMI, also set that input's **HDMI signal format** to **Enhanced** (TV
+Settings, External inputs) for 4K at 120 Hz on HDMI 3 or 4. Sony's IP control can't reach Motionflow, so the key works Sony's own picture
+menu for you: it runs along the bottom of the screen for a few seconds, then closes. Press the keys while
+something is playing in an app: the menu then holds the settings for **Apps**, and the key only ever changes
+those (never HDMI 1's or the TV tuner's; if Sony's menu names another input, the card says so and nothing
+changes). Set **Smoothness 2** and **Clearness Min** once by hand (gear, Picture settings, Motion,
+Motionflow, with Motionflow on Custom); they stay put as Motionflow changes, and only key 1 (the only one on
+Custom) uses them. Max looked smoother on pans but made a hit ball break up and jump.
 
 **For smooth live cricket**, as measured on this TV during a match:
 
@@ -66,7 +70,9 @@ Off (or Auto if pans look jerky); 3 TV shows (Standard): Auto.
 - **Keep streaming apps from idling in the background**: run `./quiet-apps.sh` once (undo: `./quiet-apps.sh
   undo`). The TV has 3 GB of memory; with Netflix, Prime, JioHotstar and Cricfy idling, SonyLIV lost 8 frames
   in 95 s of play, and none in 2 minutes once they were restricted. The apps still open and play as before.
-- **Motionflow Custom with Smoothness at the highest step** on the Sports key's picture mode (above).
+- **Key 1**, which puts Motionflow on Custom with your Smoothness 2 (above).
+- **JioHotstar** sent live cricket at 25 fps (1080p) and paces its frames unevenly: pick its highest quality
+  option, and expect SonyLIV at 1080p (50 fps) to look smoother.
 
 Why it can stutter at all: the TV's apps always draw at 60 Hz, while cricket
 streams are 50 or 25 frames a second, so frames can't be shown for equal times (50 fps: every 5th frame is

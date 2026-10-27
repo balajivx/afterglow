@@ -4,5 +4,5 @@
     <!-- TMDB's terms ask for this credit; TMDB's streaming availability is supplied by JustWatch. -->
     <string name="credit_tmdb">Data from TMDB · streaming info by JustWatch</string>
     <string name="hotkeys_name">Afterglow picture keys</string>
-    <string name="hotkeys_about">The remote\'s number keys switch the picture (Sports, Movies…) in any app. Reads no screen content.</string>
+    <string name="hotkeys_about">The remote\'s number keys switch the picture (Sports, Movies, Gaming…) in any app, setting Motionflow in Sony\'s picture menu. Reads only that menu.</string>
 </resources>

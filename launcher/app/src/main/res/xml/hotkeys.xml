@@ -1,10 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- The picture hotkeys (Hotkeys.java): sees the remote's keys, nothing on screen. -->
+<!-- The picture hotkeys (Hotkeys.java): sees the remote's keys, and reads Sony's picture menu only while
+     it sets Motionflow there. It listens for no screen events (only announcements, which TV apps hardly
+     send): every event type a service listens for makes every app on screen do work to send it, and
+     live cricket is busy enough. -->
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
     android:description="@string/hotkeys_about"
-    android:accessibilityEventTypes="typeWindowStateChanged"
+    android:accessibilityEventTypes="typeAnnouncement"
     android:accessibilityFeedbackType="feedbackGeneric"
-    android:accessibilityFlags="flagRequestFilterKeyEvents"
+    android:accessibilityFlags="flagRequestFilterKeyEvents|flagReportViewIds|flagIncludeNotImportantViews"
     android:canRequestFilterKeyEvents="true"
-    android:canRetrieveWindowContent="false"
+    android:canRetrieveWindowContent="true"
     android:notificationTimeout="100" />

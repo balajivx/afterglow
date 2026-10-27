@@ -20,10 +20,12 @@ import java.util.Calendar;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -31,12 +33,15 @@ import java.util.concurrent.TimeUnit;
 
 
 /**
- * "New and top rated on your apps", from TMDB only: movies and shows released in the last two weeks
- * (a movie in cinemas or on streaming in India; a show's series or its current season), streaming in India
- * on the apps this TV has. No animation (anime, cartoons) and no kids' shows. Half the titles are
- * Telugu, 35% English and 15% Hindi (others fill in when a language has too few). Within a language: rated titles (5+ votes) best rated
- * first, anything rated below 6.0 left out; then titles too new to be rated, most popular first. They
- * come in sets of six posters, at most three from one app in a set, paged with the arrows over the shelf.
+ * "New and top rated on your apps", from TMDB only: movies and shows released lately (a movie in cinemas
+ * or on streaming in India; a show's series or its current season), streaming in India on the apps this
+ * TV has. No animation (anime, cartoons) and no kids' shows. Lately is the last two weeks, reaching back
+ * to 30, 60 or 90 days for a language with too few titles to fill its share (Telugu often does); an app
+ * with none at all gets its own newest, from up to a year back. Within a language: rated titles (5+ votes)
+ * best rated first, anything rated below 6.0 left out; then titles too new to be rated, most popular
+ * first; the apps take turns, so every app shows up. They come in pages of six posters, each page three
+ * Telugu, two English and one Hindi ([LANGUAGES]' shares) on as many apps as it can: each refresh deals a
+ * new page of titles not shown before, and the arrows page back through the earlier ones (kept on disk).
  *
  * The token comes from the build (launcher/tmdb.properties). TMDB's streaming availability is supplied by
  * JustWatch, and TMDB's terms ask that JustWatch be credited for it; nothing here talks to JustWatch.
@@ -50,11 +55,12 @@ final class Shelf {
     static final int POOL = 30, MAX_ASKED = 80;
 
     static final class Item {
-        /** [image]: the card's wide picture; [titled]: it already carries the title, so none is drawn on it. */
-        final String title, meta, overview, image, backdrop, pkg;
+        /** [image]: the card's wide picture; [titled]: it already carries the title, so none is drawn on it; [lang]: "Telugu". */
+        final String title, meta, overview, image, backdrop, pkg, lang;
         final boolean titled;
 
-        Item(String title, String meta, String overview, String image, boolean titled, String backdrop, String pkg) {
+        Item(String title, String meta, String overview, String image, boolean titled, String backdrop, String pkg, String lang) {
+            this.lang = lang;
             this.title = title;
             this.meta = meta;
             this.overview = overview;
@@ -84,11 +90,12 @@ final class Shelf {
             new Service("Netflix", "com.netflix.ninja", 8),
             new Service("SonyLIV", "com.sonyliv", 237),
             new Service("ZEE5", "com.graymatrix.did", 232),
-            new Service("aha", "ahaflix.tv", 532));
+            new Service("aha", "ahaflix.tv", 532),
+            new Service("Apple TV", "com.apple.atve.sony.appletv", 350));
 
     // ---- Languages, in the order this home watches them
 
-    /** TMDB language code, the name shown, its share of the shelf in percent. */
+    /** TMDB language code, the name shown, its share of the shelf (and of every page) in percent. */
     private static final String[][] LANGUAGES = {
             {"te", "Telugu", "50"},
             {"en", "English", "35"},
@@ -187,61 +194,56 @@ final class Shelf {
         return out;
     }
 
+    /** How far back a language looks, in days: further only while it has too few titles for its share. */
+    private static final int[] WINDOWS = {14, 30, 60, 90};
+    /** How far back an app with no titles at all looks for its own newest. */
+    private static final int[] APP_WINDOWS = {90, 365};
+
     /**
-     * Every title that qualifies, best first (up to [POOL]), for the sets of six the shelf pages through.
-     * TMDB answers in about a second, so the languages and then the titles are asked six at a time.
-     * The pool keeps [LANGUAGES]' shares in order, so each set of six does too.
+     * Every title that qualifies (up to [POOL]), for the pages of six the shelf deals. TMDB answers in about
+     * a second, so the languages are asked side by side and the titles six at a time; a title is looked up
+     * once, however many windows ask for it. The pool keeps [LANGUAGES]' shares in order.
      */
     static List<Item> fetch(String token, Set<String> installed, long now) throws IOException {
         Map<Integer, Service> providers = new HashMap<>();
         for (Service s : SERVICES) if (installed.contains(s.pkg)) providers.put(s.tmdbId, s);
         if (providers.isEmpty()) return new ArrayList<>();
-        java.text.SimpleDateFormat f = new java.text.SimpleDateFormat("yyyy-MM-dd", Locale.US);
-        f.setTimeZone(Weather.ZONE);
-        Calendar cal = Calendar.getInstance(Weather.ZONE);
-        cal.setTimeInMillis(now);
-        final String today = f.format(cal.getTime());
-        cal.add(Calendar.DAY_OF_MONTH, -14);
-        final String since = f.format(cal.getTime());
-        final String ids = TextUtils.join("|", providers.keySet());
-
-        ExecutorService pool = Executors.newFixedThreadPool(6);
+        int n = LANGUAGES.length;
+        ExecutorService asks = Executors.newFixedThreadPool(6), langs = Executors.newFixedThreadPool(n);
+        Map<String, Future<JSONObject>> details = new ConcurrentHashMap<>();
         try {
-            List<Future<List<JSONObject>>> asked = new ArrayList<>();
-            for (String[] l : LANGUAGES) asked.add(pool.submit(() -> candidates(token, l[0], ids, since, today)));
-
-            // Each language's titles checked (details with where it streams, all at once), best first.
-            int n = LANGUAGES.length;
-            List<List<JSONObject>> found = new ArrayList<>();
-            List<List<Future<JSONObject>>> details = new ArrayList<>();
-            for (int k = 0; k < n; k++) {
-                List<JSONObject> c = result(asked.get(k));
-                found.add(c);
-                List<Future<JSONObject>> d = new ArrayList<>();
-                for (int i = 0; i < c.size() && i < MAX_ASKED / n; i++) {
-                    JSONObject r = c.get(i);
-                    d.add(pool.submit(() -> tmdb(token, "/" + r.optString("_type") + "/" + r.optInt("id"), DETAILS)));
-                }
-                details.add(d);
+            List<Future<List<Item>>> asked = new ArrayList<>();
+            for (String[] l : LANGUAGES) {
+                int need = (int) Math.ceil(POOL * Double.parseDouble(l[2]) / 100);
+                asked.add(langs.submit(() -> titles(token, l, providers, need, WINDOWS, now, asks, details)));
             }
             List<List<Item>> byLang = new ArrayList<>();
-            for (int k = 0; k < n; k++) {
-                List<Item> q = new ArrayList<>();
-                for (int i = 0; i < details.get(k).size(); i++) {
+            for (Future<List<Item>> f : asked) byLang.add(result(f, 150));
+
+            // An app with nothing above (aha's and SonyLIV's titles are thin on TMDB): its own newest, in
+            // each language, so every app on this TV shows up.
+            Set<String> covered = new HashSet<>();
+            for (List<Item> l : byLang) for (Item it : l) covered.add(it.pkg);
+            for (Service s : providers.values()) {
+                if (covered.contains(s.pkg)) continue;
+                Map<Integer, Service> only = Collections.singletonMap(s.tmdbId, s);
+                List<Future<List<Item>>> own = new ArrayList<>();
+                for (String[] l : LANGUAGES) own.add(langs.submit(() -> titles(token, l, only, 1, APP_WINDOWS, now, asks, details)));
+                for (int k = 0; k < n; k++) {
                     try {
-                        Item it = item(found.get(k).get(i), result(details.get(k).get(i)), LANGUAGES[k][1], providers, since);
-                        if (it != null) q.add(it);
+                        byLang.get(k).addAll(result(own.get(k), 150));
                     } catch (IOException ignored) {
-                        // one title that didn't answer
+                        // this app stays without; the rest of the shelf is fine
                     }
                 }
-                byLang.add(q);
             }
+            for (int k = 0; k < n; k++) byLang.set(k, spread(byLang.get(k)));
 
             // Mixed by share: each place goes to the language furthest below its share so far (Telugu,
             // English, Hindi, Telugu, English, Telugu: three, two and one in every six). When a language
             // runs out, the others fill its places.
             List<Item> out = new ArrayList<>();
+            Set<String> names = new HashSet<>();
             int[] taken = new int[n];
             while (out.size() < POOL) {
                 int pick = -1;
@@ -251,12 +253,64 @@ final class Shelf {
                     if (pick < 0 || taken[k] / share < taken[pick] / Double.parseDouble(LANGUAGES[pick][2])) pick = k;
                 }
                 if (pick < 0) break;
-                out.add(byLang.get(pick).get(taken[pick]++));
+                Item it = byLang.get(pick).get(taken[pick]++);
+                if (names.add(it.title)) out.add(it); // the same title found through two apps: once
             }
             return out;
         } finally {
-            pool.shutdownNow();
+            asks.shutdownNow();
+            langs.shutdownNow();
         }
+    }
+
+    /**
+     * [lang]'s titles on the apps in [providers], best first: from the last [windows][0] days, then further
+     * back, window by window, until there are [need] of them.
+     */
+    private static List<Item> titles(String token, String[] lang, Map<Integer, Service> providers, int need, int[] windows,
+                                     long now, ExecutorService asks, Map<String, Future<JSONObject>> details) throws IOException {
+        java.text.SimpleDateFormat f = new java.text.SimpleDateFormat("yyyy-MM-dd", Locale.US);
+        f.setTimeZone(Weather.ZONE);
+        Calendar cal = Calendar.getInstance(Weather.ZONE);
+        cal.setTimeInMillis(now);
+        final String today = f.format(cal.getTime());
+        final String ids = TextUtils.join("|", providers.keySet());
+        List<Item> out = new ArrayList<>();
+        for (int days : windows) {
+            cal.setTimeInMillis(now);
+            cal.add(Calendar.DAY_OF_MONTH, -days);
+            String since = f.format(cal.getTime());
+            List<JSONObject> c = candidates(token, lang[0], ids, since, today);
+            int ask = Math.min(c.size(), MAX_ASKED / LANGUAGES.length);
+            List<Future<JSONObject>> d = new ArrayList<>();
+            for (int i = 0; i < ask; i++) {
+                JSONObject r = c.get(i);
+                d.add(details.computeIfAbsent(r.optString("_type") + "/" + r.optInt("id"),
+                        k -> asks.submit(() -> tmdb(token, "/" + k, DETAILS))));
+            }
+            out = new ArrayList<>();
+            for (int i = 0; i < ask; i++) {
+                try {
+                    Item it = item(c.get(i), result(d.get(i)), lang[1], providers, since);
+                    if (it != null) out.add(it);
+                } catch (IOException ignored) {
+                    // one title that didn't answer
+                }
+            }
+            if (out.size() >= need) break;
+        }
+        return out;
+    }
+
+    /** [items] with the apps taking turns (each app's best first, the app of the best title leading). */
+    private static List<Item> spread(List<Item> items) {
+        Map<String, List<Item>> byApp = new LinkedHashMap<>();
+        for (Item it : items) byApp.computeIfAbsent(it.pkg, k -> new ArrayList<>()).add(it);
+        List<Item> out = new ArrayList<>();
+        for (int round = 0; out.size() < items.size(); round++) {
+            for (List<Item> l : byApp.values()) if (round < l.size()) out.add(l.get(round));
+        }
+        return out;
     }
 
     /** A title's details, where it streams, and its wide pictures (those with the title on them too). */
@@ -268,8 +322,12 @@ final class Shelf {
     }
 
     private static <T> T result(Future<T> f) throws IOException {
+        return result(f, 40);
+    }
+
+    private static <T> T result(Future<T> f, int seconds) throws IOException {
         try {
-            return f.get(40, TimeUnit.SECONDS);
+            return f.get(seconds, TimeUnit.SECONDS);
         } catch (java.util.concurrent.ExecutionException e) {
             throw e.getCause() instanceof IOException ? (IOException) e.getCause() : new IOException(e.getCause());
         } catch (InterruptedException | java.util.concurrent.TimeoutException e) {
@@ -317,41 +375,97 @@ final class Shelf {
         return new Item(r.optString(tv ? "name" : "title"), rating + " · " + lang + " · " + app.name + " · " + kind,
                 d.optString("overview", r.optString("overview")).trim(),
                 "https://image.tmdb.org/t/p/w780" + (card != null ? card : r.optString("backdrop_path")), card != null,
-                "https://image.tmdb.org/t/p/w1280" + r.optString("backdrop_path"), app.pkg);
+                "https://image.tmdb.org/t/p/w1280" + r.optString("backdrop_path"), app.pkg, lang);
+    }
+
+    /** One title, whichever fetch it came from. */
+    static String key(Item it) {
+        return it.title + "|" + it.pkg;
+    }
+
+    /** Whether [pool] holds a title none of the [shown] pages has had. */
+    static boolean hasUnseen(List<Item> pool, List<List<Item>> shown) {
+        Set<String> seen = new HashSet<>();
+        for (List<Item> page : shown) for (Item it : page) seen.add(key(it));
+        for (Item it : pool) if (!seen.contains(key(it))) return true;
+        return false;
     }
 
     /**
-     * [pool] dealt into sets of six in order, at most three from one app in a set: each title goes into the
-     * first set with room for it. A last set of fewer than three is left out.
+     * The languages of a page's six places, in order: each place goes to the language furthest below its
+     * share so far (Telugu, English, Hindi, Telugu, English, Telugu).
      */
-    static List<List<Item>> sets(List<Item> pool) {
-        List<List<Item>> out = new ArrayList<>();
-        for (Item it : pool) {
-            List<Item> home = null;
-            for (List<Item> set : out) {
-                int same = 0;
-                for (Item o : set) if (o.pkg.equals(it.pkg)) same++;
-                if (set.size() < COUNT && same < 3) {
-                    home = set;
-                    break;
+    static List<String> places() {
+        List<String> out = new ArrayList<>();
+        int[] taken = new int[LANGUAGES.length];
+        for (int p = 0; p < COUNT; p++) {
+            int pick = 0;
+            for (int k = 1; k < LANGUAGES.length; k++) {
+                if (taken[k] / Double.parseDouble(LANGUAGES[k][2]) < taken[pick] / Double.parseDouble(LANGUAGES[pick][2])) pick = k;
+            }
+            taken[pick]++;
+            out.add(LANGUAGES[pick][1]);
+        }
+        return out;
+    }
+
+    /**
+     * The next page of six from [pool], each place in its language ([places]). For each: the best title not
+     * shown before on an app not yet on the page; else one not shown before; else an earlier one in that
+     * language (not one on [current]) to keep the shares; else, the language quite run out, any title not
+     * shown before. At most three from one app.
+     */
+    static List<Item> deal(List<Item> pool, List<List<Item>> shown, List<Item> current) {
+        Set<String> seen = new HashSet<>(), showing = new HashSet<>(), taken = new HashSet<>();
+        for (List<Item> page : shown) for (Item it : page) seen.add(key(it));
+        if (current != null) for (Item it : current) showing.add(key(it));
+        Map<String, Integer> perApp = new HashMap<>();
+        List<Item> out = new ArrayList<>();
+        for (String lang : places()) {
+            Item pick = null;
+            for (int pass = 0; pass < 4 && pick == null; pass++) {
+                for (Item it : pool) {
+                    String k = key(it);
+                    int same = perApp.getOrDefault(it.pkg, 0);
+                    if (taken.contains(k) || same >= 3) continue;
+                    boolean fits = pass == 3 || it.lang.equals(lang);
+                    boolean fresh = !seen.contains(k);
+                    if (fits && (pass == 0 ? fresh && same == 0 : pass == 2 ? !showing.contains(k) : fresh)) {
+                        pick = it;
+                        break;
+                    }
                 }
             }
-            if (home == null) out.add(home = new ArrayList<>());
-            home.add(it);
+            if (pick == null) continue;
+            perApp.put(pick.pkg, perApp.getOrDefault(pick.pkg, 0) + 1);
+            taken.add(key(pick));
+            out.add(pick);
         }
-        for (int i = out.size() - 1; i > 0 && out.get(i).size() < 3; i--) out.remove(i);
         return out;
     }
 
     // ---- Where it all comes from and where it's kept (blocking: run off the main thread)
 
+    /** The pages of titles shown, oldest first, and the one showing. */
+    static final class History {
+        final List<List<Item>> pages;
+        final int at;
+
+        History(List<List<Item>> pages, int at) {
+            this.pages = pages;
+            this.at = at;
+        }
+    }
+
     static final class Source {
-        private final File file, pictures;
+        private static final String PAGES = "PAGES1";
+        private final File file, pagesFile, pictures;
         private final String token;
 
         Source(File cacheDir, String tmdbToken) {
             token = tmdbToken == null ? "" : tmdbToken.trim();
             file = new File(cacheDir, "home-shelf.json");
+            pagesFile = new File(cacheDir, "home-shelf-pages.json");
             pictures = new File(cacheDir, "home-img");
             // Day files from earlier shelves (TVmaze in v6.0, JustWatch in v7).
             for (String name : new String[]{"home-tvmaze", "home-new"}) {
@@ -367,17 +481,59 @@ final class Shelf {
                 if (!file.isFile()) return null;
                 JSONObject root = new JSONObject(Net.readText(file));
                 if (!sourceName().equals(root.optString("source"))) return null;
-                JSONArray a = root.getJSONArray("items");
-                List<Item> out = new ArrayList<>();
-                for (int i = 0; i < a.length(); i++) {
-                    JSONObject o = a.getJSONObject(i);
-                    out.add(new Item(o.getString("title"), o.getString("meta"), o.optString("overview"), o.getString("image"),
-                            o.optBoolean("titled"), o.getString("backdrop"), o.getString("package")));
-                }
+                List<Item> out = fromJson(root.getJSONArray("items"));
                 return out.isEmpty() ? null : out;
             } catch (IOException | JSONException e) {
                 return null;
             }
+        }
+
+        /** The pages shown before, or null when there are none (or they're from an older shelf). */
+        History history() {
+            try {
+                if (!pagesFile.isFile()) return null;
+                JSONObject root = new JSONObject(Net.readText(pagesFile));
+                if (!PAGES.equals(root.optString("source"))) return null;
+                JSONArray a = root.getJSONArray("pages");
+                List<List<Item>> pages = new ArrayList<>();
+                for (int i = 0; i < a.length(); i++) {
+                    List<Item> page = fromJson(a.getJSONArray(i));
+                    if (!page.isEmpty()) pages.add(page);
+                }
+                return pages.isEmpty() ? null : new History(pages, Math.min(root.optInt("at"), pages.size() - 1));
+            } catch (IOException | JSONException e) {
+                return null;
+            }
+        }
+
+        void saveHistory(List<List<Item>> pages, int at) {
+            try {
+                JSONArray a = new JSONArray();
+                for (List<Item> page : pages) a.put(toJson(page));
+                Net.writeAtomically(pagesFile, new JSONObject().put("source", PAGES).put("at", at).put("pages", a).toString());
+            } catch (IOException | JSONException ignored) {
+                // Only the way back is lost; the shelf itself is fine.
+            }
+        }
+
+        private static List<Item> fromJson(JSONArray a) throws JSONException {
+            List<Item> out = new ArrayList<>();
+            for (int i = 0; i < a.length(); i++) {
+                JSONObject o = a.getJSONObject(i);
+                String meta = o.getString("meta"), parts[] = meta.split(" · ");
+                out.add(new Item(o.getString("title"), meta, o.optString("overview"), o.getString("image"), o.optBoolean("titled"),
+                        o.getString("backdrop"), o.getString("package"), o.optString("lang", parts.length > 1 ? parts[1] : "")));
+            }
+            return out;
+        }
+
+        private static JSONArray toJson(List<Item> items) throws JSONException {
+            JSONArray a = new JSONArray();
+            for (Item it : items) {
+                a.put(new JSONObject().put("title", it.title).put("meta", it.meta).put("image", it.image)
+                        .put("overview", it.overview).put("titled", it.titled).put("backdrop", it.backdrop).put("package", it.pkg).put("lang", it.lang));
+            }
+            return a;
         }
 
         boolean hasToken() {
@@ -385,7 +541,7 @@ final class Shelf {
         }
 
         private static String sourceName() {
-            return "TMDB_CARDS1";
+            return "TMDB_CARDS2"; // 2: languages reach back further, every app has titles
         }
 
         long age(long now) {
@@ -398,13 +554,8 @@ final class Shelf {
             if (!hasToken()) throw new IOException("No TMDB token in the build");
             List<Item> items = Shelf.fetch(token, installed, now);
             if (items.size() < 3) throw new IOException("Only " + items.size() + " titles to show");
-            JSONArray a = new JSONArray();
             try {
-                for (Item it : items) {
-                    a.put(new JSONObject().put("title", it.title).put("meta", it.meta).put("image", it.image)
-                            .put("overview", it.overview).put("titled", it.titled).put("backdrop", it.backdrop).put("package", it.pkg));
-                }
-                Net.writeAtomically(file, new JSONObject().put("source", sourceName()).put("items", a).toString());
+                Net.writeAtomically(file, new JSONObject().put("source", sourceName()).put("items", toJson(items)).toString());
             } catch (JSONException e) {
                 throw new IOException(e);
             }
@@ -628,7 +779,7 @@ final class Shelf {
      */
     static final class ShelfButton extends ArtView {
         private final Paint fillP = new Paint(Paint.ANTI_ALIAS_FLAG), glyphP = new Paint(Paint.FILTER_BITMAP_FLAG);
-        private final Bitmap glyph;
+        private Bitmap glyph;
         private final int glyphSize;
         private final Ui.Tween live = new Ui.Tween(1f);
         private boolean spinning;
@@ -637,8 +788,13 @@ final class Shelf {
         ShelfButton(Context c, int glyphRes, String label) {
             super(c);
             glyphSize = Ui.dpi(c, 12f);
-            glyph = Ui.glyph(c, glyphRes, glyphSize);
+            setGlyph(glyphRes, label);
+        }
+
+        void setGlyph(int glyphRes, String label) {
+            glyph = Ui.glyph(getContext(), glyphRes, glyphSize);
             setContentDescription(label);
+            invalidate();
         }
 
         static float diameter(Context c) {
@@ -684,14 +840,17 @@ final class Shelf {
     /**
      * The shelf: its head (left) and the data's credit (right) over six posters in equal columns, 16 apart,
      * their art one height so the titles share a line. It reaches a ring's width past its slot so focus
-     * rings stay inside it.
+     * rings stay inside it. It starts folded: only the head and its + button, on the line just over the
+     * dock; + opens it out and − folds it again.
      */
     static final class ShelfView extends ViewGroup {
         final List<PosterView> posters = new ArrayList<>();
-        /** Over the posters, after the head: the previous set, the next set, and fresh titles. */
-        final ShelfButton prev, next, refresh;
+        /** After the head: open or fold the shelf, the previous page, the next page, and fresh titles. */
+        final ShelfButton toggle, prev, next, refresh;
         private final List<ShelfButton> buttons;
-        private int lastButton = 1;
+        private int lastButton = 2;
+        private boolean collapsed = true;
+        private int pages;
         final int overhang;
         private final TextPaint headP, creditP, pageP;
         private String head = "", credit = "", page = "", note = "";
@@ -708,13 +867,14 @@ final class Shelf {
                 posters.add(p);
                 addView(p);
             }
-            prev = new ShelfButton(c, R.drawable.ph_caret_left_bold, "Previous set");
-            next = new ShelfButton(c, R.drawable.ph_caret_right_bold, "Next set");
+            toggle = new ShelfButton(c, R.drawable.ph_plus_bold, "Show titles");
+            prev = new ShelfButton(c, R.drawable.ph_caret_left_bold, "Previous page");
+            next = new ShelfButton(c, R.drawable.ph_caret_right_bold, "Next page");
             refresh = new ShelfButton(c, R.drawable.ph_arrow_clockwise_bold, "Fresh titles");
-            buttons = java.util.Arrays.asList(prev, next, refresh);
+            buttons = java.util.Arrays.asList(toggle, prev, next, refresh);
             for (ShelfButton b : buttons) {
                 addView(b);
-                b.setVisibility(INVISIBLE);
+                b.setVisibility(b == toggle ? VISIBLE : INVISIBLE);
             }
             overhang = Math.round(posters.get(0).ringSpace);
             headP = Ui.textPaint(c, Ui.semibold(c), Ui.T_LABEL, Ui.TEXT_2, 0f, false);
@@ -734,14 +894,39 @@ final class Shelf {
             invalidate();
         }
 
-        /** Shows the buttons with "[at] / [of]" between the arrows (of 0: no buttons yet). */
+        /** Shows the buttons with "[at] / [of]" between the arrows (of 0: no pages yet, only + or −). */
         void setPage(int at, int of) {
-            for (ShelfButton b : buttons) b.setVisibility(of > 0 ? VISIBLE : INVISIBLE);
-            if (of <= 0 && buttons.contains(findFocus())) lastFocused().requestFocus();
+            pages = of;
+            showButtons();
             page = of > 0 ? (at + 1) + " / " + of : "";
             prev.setLive(at > 0);
             next.setLive(at + 1 < of);
             invalidate();
+        }
+
+        boolean collapsed() {
+            return collapsed;
+        }
+
+        /** Folds the shelf to its head line (the posters are hidden by whoever fills them), or opens it. */
+        void setCollapsed(boolean c) {
+            collapsed = c;
+            toggle.setGlyph(c ? R.drawable.ph_plus_bold : R.drawable.ph_minus_bold, c ? "Show titles" : "Hide titles");
+            showButtons();
+            requestLayout();
+            invalidate();
+        }
+
+        private void showButtons() {
+            boolean open = !collapsed && pages > 0;
+            for (ShelfButton b : buttons) if (b != toggle) b.setVisibility(open ? VISIBLE : INVISIBLE);
+            View f = findFocus();
+            if (f != null && f.getVisibility() != VISIBLE) entry().requestFocus();
+        }
+
+        /** Where focus lands coming from above or below: the + button while folded, else the last poster. */
+        View entry() {
+            return collapsed ? toggle : lastFocused();
         }
 
         /** A word after the buttons ("Up to date") that fades away after a few seconds. */
@@ -810,15 +995,17 @@ final class Shelf {
             }
             Context c = getContext();
             float line = Ui.dp(c, Ui.T_LABEL * 1.3f);
-            headBase = Ui.baselineIn(headP, overhang, line);
-            // In the head's line, after it: [<] 1 / 3 [>]  [refresh]  note
+            // Folded, the head line drops to the slot's foot, just over the dock.
+            float lineTop = collapsed ? getHeight() - overhang - line : overhang;
+            headBase = Ui.baselineIn(headP, lineTop, line);
+            // In the head's line, after it: [+]  [<] 1 / 3 [>]  [refresh]  note
             int size = Math.round(ShelfButton.diameter(c) + 2 * overhang);
-            float mid = overhang + line / 2f, x = overhang + headP.measureText(head) + Ui.dp(c, Ui.S3);
+            float mid = lineTop + line / 2f, x = overhang + headP.measureText(head) + Ui.dp(c, Ui.S3);
             int top = Math.round(mid - size / 2f);
-            float pageW = pageP.measureText("88 / 88");
-            float[] lefts = {x, x + size + Ui.dp(c, Ui.S1) + pageW, x + 2 * size + Ui.dp(c, Ui.S1 + Ui.S2) + pageW};
-            pageLeft = x + size - overhang + Ui.dp(c, Ui.S1) / 2f;
-            noteLeft = lefts[2] + size + Ui.dp(c, Ui.S1);
+            float pageW = pageP.measureText("88 / 88"), p = x + size + Ui.dp(c, Ui.S2);
+            float[] lefts = {x, p, p + size + Ui.dp(c, Ui.S1) + pageW, p + 2 * size + Ui.dp(c, Ui.S1 + Ui.S2) + pageW};
+            pageLeft = p + size - overhang + Ui.dp(c, Ui.S1) / 2f;
+            noteLeft = lefts[3] + size + Ui.dp(c, Ui.S1);
             for (int i = 0; i < buttons.size(); i++) {
                 int left = Math.round(lefts[i] - overhang);
                 buttons.get(i).layout(left, top, left + size, top + size);
@@ -854,13 +1041,14 @@ final class Shelf {
             if (b >= 0) {
                 switch (direction) {
                     case FOCUS_LEFT:
-                        return b > 0 ? buttons.get(b - 1) : focused;
+                        return b > 0 && buttons.get(b - 1).getVisibility() == VISIBLE ? buttons.get(b - 1) : focused;
                     case FOCUS_RIGHT:
-                        return b + 1 < buttons.size() ? buttons.get(b + 1) : focused;
+                        return b + 1 < buttons.size() && buttons.get(b + 1).getVisibility() == VISIBLE ? buttons.get(b + 1) : focused;
                     case FOCUS_UP:
                         return above != null && above.get() != null ? above.get() : focused;
                     case FOCUS_DOWN:
-                        return lastFocused();
+                        if (!collapsed) return lastFocused();
+                        return below != null && below.get() != null ? below.get() : focused;
                 }
             }
             return super.focusSearch(focused, direction);
@@ -869,6 +1057,7 @@ final class Shelf {
         @Override
         protected void onDraw(Canvas canvas) {
             canvas.drawText(head, overhang, headBase, headP);
+            if (collapsed) return; // the head and + only
             if (!credit.isEmpty()) canvas.drawText(credit, getWidth() - overhang - creditWidth, headBase, creditP);
             if (!page.isEmpty()) {
                 float w = pageP.measureText(page), room = pageP.measureText("88 / 88");

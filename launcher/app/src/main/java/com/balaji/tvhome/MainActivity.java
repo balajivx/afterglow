@@ -59,7 +59,7 @@ public class MainActivity extends Activity {
     private Shelf.ShelfView shelf;
     private Shelf.SpotlightView spotlight;
     private DockView dock;
-    private FrameLayout shelfSlot, dockSlot;
+    private FrameLayout shelfSlot, spotlightSlot, dockSlot;
     private View content;
     private android.animation.ValueAnimator pageAnim;
     private final Bitmap[] heroes = new Bitmap[Shelf.COUNT];
@@ -76,7 +76,8 @@ public class MainActivity extends Activity {
     private Weather forecast;
     private Weather.Reading reading;
     private List<Shelf.Item> shelfItems, shelfPool;
-    private List<List<Shelf.Item>> shelfSets;
+    /** The pages of titles dealt so far, oldest first; [shelfSet] is the one showing. */
+    private final List<List<Shelf.Item>> shelfSets = new ArrayList<>();
     private int shelfSet, shelfTicket;
     /** Inputs or Settings, whichever had focus last (Up from the sports card goes there). */
     private View lastQuick;
@@ -143,7 +144,9 @@ public class MainActivity extends Activity {
         settings.setOnFocusChangeListener(rememberQuick);
 
         spotlight = new Shelf.SpotlightView(this);
-        ((FrameLayout) findViewById(R.id.spotlightSlot)).addView(spotlight, match());
+        spotlightSlot = findViewById(R.id.spotlightSlot);
+        spotlightSlot.addView(spotlight, match());
+        spotlightSlot.setVisibility(View.INVISIBLE); // the shelf starts folded
 
         shelfSlot = findViewById(R.id.shelfSlot);
         shelf = new Shelf.ShelfView(this);
@@ -159,15 +162,16 @@ public class MainActivity extends Activity {
         dockSlot.addView(dock, match());
         content = findViewById(R.id.content);
 
-        dock.above = shelf::lastFocused;
+        dock.above = shelf::entry;
         shelf.below = dock::lastFocused;
         shelf.above = () -> sports;
-        sports.below = shelf::lastFocused;
+        sports.below = shelf::entry;
         sports.above = () -> lastQuick;
         sports.setId(View.generateViewId());
         for (View q : new View[]{inputs, settings}) q.setNextFocusDownId(sports.getId());
-        shelf.prev.onPress = () -> showSet(shelfSet - 1);
-        shelf.next.onPress = () -> showSet(shelfSet + 1);
+        shelf.toggle.onPress = () -> foldShelf(!shelf.collapsed());
+        shelf.prev.onPress = () -> turnTo(shelfSet - 1);
+        shelf.next.onPress = () -> turnTo(shelfSet + 1);
         shelf.refresh.onPress = () -> loadShelf(true);
         sports.onFace = color -> sceneView.glow(color);
         dock.onFocus = t -> movePage(dock.rowOf(t));
@@ -592,17 +596,21 @@ public class MainActivity extends Activity {
 
     // ------------------------------------------------------------------ shelf
 
+    /** How many pages of six the shelf keeps to go back through. */
+    private static final int HISTORY = 4;
+
     private final Runnable retryShelf = this::loadShelf;
 
     /** Shows [items] with their [pictures]; null items shows the calm empty state . */
     private void showShelf(List<Shelf.Item> items, List<Bitmap> pictures) {
         shelf.setHead(getString(R.string.shelf_head), items == null ? "" : getString(R.string.credit_tmdb));
-        shelf.setPage(shelfSet, shelfSets == null ? 0 : shelfSets.size());
+        shelf.setPage(shelfSet, shelfSets.size());
+        boolean folded = shelf.collapsed();
         for (int i = 0; i < Shelf.COUNT; i++) {
             Shelf.PosterView p = shelf.posters.get(i);
             Shelf.Item item = items != null && i < items.size() ? items.get(i) : null;
-            // A short last set leaves its empty places out of sight (and out of focus's way).
-            p.setVisibility(item == null && items != null ? View.INVISIBLE : View.VISIBLE);
+            // Folded, no posters; open, a short page leaves its empty places out of sight (and out of focus's way).
+            p.setVisibility(folded || (item == null && items != null) ? View.INVISIBLE : View.VISIBLE);
             if (item == null) {
                 p.setItem(null);
                 p.onPress = null;
@@ -620,11 +628,24 @@ public class MainActivity extends Activity {
             if (p.isFocused()) sceneView.glow(p.glowColor);
         }
         if (shelf.findFocus() instanceof Shelf.PosterView && shelf.findFocus().getVisibility() != View.VISIBLE) {
-            shelf.lastFocused().requestFocus();
+            shelf.entry().requestFocus();
         }
-        // The spotlight tells the focused card's story, or the set's first while focus is elsewhere.
+        // The spotlight tells the focused card's story, or the page's first while focus is elsewhere.
         int at = Math.max(0, shelf.posters.indexOf(getCurrentFocus()));
         spotlight.show(items == null || items.isEmpty() ? null : items.get(Math.min(at, items.size() - 1)));
+    }
+
+    /** Folds the shelf down to its head line over the dock (how it starts), or opens it out with its posters. */
+    private void foldShelf(boolean fold) {
+        shelf.setCollapsed(fold);
+        spotlightSlot.setVisibility(fold ? View.INVISIBLE : View.VISIBLE);
+        showShelf(shelfItems, null);
+        if (fold) {
+            shelf.toggle.requestFocus();
+            sceneView.hero(null);
+        } else {
+            shelf.lastFocused().requestFocus(); // brings its story and backdrop
+        }
     }
 
     private int[][] posterSizes() {
@@ -640,8 +661,10 @@ public class MainActivity extends Activity {
     }
 
     /**
-     * The titles: from disk at once, then from TMDB when they're four hours old ([fresh]: now, for the
-     * refresh button, which then shows a set with titles not seen before, or else the next set).
+     * The titles: the pages from last time and the pool from disk at once, then the pool from TMDB when it's
+     * four hours old ([fresh]: now, for the refresh button, which then deals a new page of titles not shown
+     * before; the earlier pages stay behind ‹). A pool with titles not shown before also deals a new page
+     * by itself, while focus is away from the shelf.
      */
     private void loadShelf(boolean fresh) {
         if (shelfBusy || apps.isEmpty() || !shelfSource.hasToken()) return;
@@ -658,40 +681,33 @@ public class MainActivity extends Activity {
             try {
                 if (pool == null) {
                     pool = shelfSource.cached();
-                    if (pool != null) {
-                        List<Shelf.Item> cached = pool;
-                        handler.post(() -> usePool(cached, -1, null));
-                    }
+                    Shelf.History h = shelfSource.history();
+                    List<Shelf.Item> cached = pool;
+                    if (cached != null || h != null) handler.post(() -> startShelf(cached, h));
                 }
                 boolean stale = shelfSource.age(now) >= SHELF_EVERY_MS;
                 if (!fresh && (quiet || !online || (!stale && pool != null))) return;
                 List<Shelf.Item> got = shelfSource.fetch(now, installed);
                 handler.post(() -> {
-                    int to = -1;
-                    String note = null;
+                    boolean news = Shelf.hasUnseen(got, shelfSets);
+                    shelfPool = got;
                     if (fresh) {
-                        // The first set holding a title not seen before; else simply the next one.
-                        List<List<Shelf.Item>> sets = Shelf.sets(got);
-                        Set<String> seen = new HashSet<>();
-                        if (known != null) for (Shelf.Item it : known) seen.add(it.title + "|" + it.pkg);
-                        for (int k = 0; k < sets.size() && to < 0; k++) {
-                            for (Shelf.Item it : sets.get(k)) if (!seen.contains(it.title + "|" + it.pkg)) to = k;
-                        }
-                        if (to < 0) {
-                            to = sets.isEmpty() ? 0 : (shelfSet + 1) % sets.size();
-                            note = "Up to date";
-                        } else {
-                            note = "New titles";
-                        }
+                        dealSet();
+                        shelf.note(news ? "New titles" : "Seen them all · from the top");
+                    } else if (shelfSets.isEmpty() || (news && !shelf.hasFocus())) {
+                        dealSet();
                     }
-                    usePool(got, to, note);
+                    // Pictures for the pool and for every page kept, so paging either way is instant.
+                    List<Shelf.Item> keep = new ArrayList<>();
+                    for (List<Shelf.Item> page : shelfSets) keep.addAll(page);
+                    shelfIo.execute(() -> prefetchPictures(got, keep, sizes));
                 });
-                prefetchPictures(got, sizes);
             } catch (IOException e) {
                 // Offline, the service hiccuped, or too few shows this week: keep the shelf that's up.
                 handler.post(() -> {
                     if (fresh) {
-                        if (shelfSets != null && shelfSets.size() > 1) showSet((shelfSet + 1) % shelfSets.size());
+                        // Still a new page from the titles already here, while some haven't been shown.
+                        if (shelfPool != null && Shelf.hasUnseen(shelfPool, shelfSets)) dealSet();
                         shelf.note(online ? "Couldn't reach TMDB" : "Offline");
                     }
                     shelfQuietUntil = System.currentTimeMillis() + (shelfItems == null ? RETRY_MS : 30 * 60 * 1000L);
@@ -706,18 +722,45 @@ public class MainActivity extends Activity {
         });
     }
 
-    /** Takes [pool] as the shelf's titles and shows set [to] (-1: stay on the current set if it still exists). */
-    private void usePool(List<Shelf.Item> pool, int to, String note) {
-        shelfPool = pool;
-        shelfSets = Shelf.sets(pool);
-        if (shelfSets.isEmpty()) return;
-        showSet(to >= 0 ? to : Math.min(shelfSet, shelfSets.size() - 1));
-        if (note != null) shelf.note(note);
+    /** From disk at start: back to the page the viewer was on, or a first page dealt from [pool]. */
+    private void startShelf(List<Shelf.Item> pool, Shelf.History h) {
+        if (pool != null) shelfPool = pool;
+        if (!shelfSets.isEmpty()) return;
+        if (h != null) {
+            // The newest [HISTORY] only (pages saved when more were kept are let go).
+            int drop = Math.max(0, h.pages.size() - HISTORY);
+            shelfSets.addAll(h.pages.subList(drop, h.pages.size()));
+            showSet(Math.max(0, h.at - drop));
+        } else {
+            dealSet();
+        }
     }
 
-    /** Shows set [index] of the titles, its pictures from disk (or the network while they're still coming). */
+    /**
+     * Deals a page of six from the pool ([Shelf.deal]: titles not shown before first) onto the end of the
+     * pages and shows it; the oldest page goes once there are [HISTORY].
+     */
+    private void dealSet() {
+        if (shelfPool == null) return;
+        List<Shelf.Item> page = Shelf.deal(shelfPool, shelfSets, shelfItems);
+        if (page.isEmpty()) return;
+        shelfSets.add(page);
+        while (shelfSets.size() > HISTORY) shelfSets.remove(0);
+        turnTo(shelfSets.size() - 1);
+    }
+
+    /** Shows page [index] and keeps the pages and the place on disk, for after the TV restarts the launcher. */
+    private void turnTo(int index) {
+        if (index < 0 || index >= shelfSets.size()) return;
+        showSet(index);
+        final List<List<Shelf.Item>> pages = new ArrayList<>(shelfSets);
+        final int at = shelfSet;
+        shelfIo.execute(() -> shelfSource.saveHistory(pages, at));
+    }
+
+    /** Shows page [index] of the titles, its pictures from disk (or the network while they're still coming). */
     private void showSet(int index) {
-        if (shelfSets == null || index < 0 || index >= shelfSets.size()) return;
+        if (index < 0 || index >= shelfSets.size()) return;
         shelfSet = index;
         final List<Shelf.Item> items = shelfSets.get(index);
         final int[][] sizes = posterSizes();
@@ -733,7 +776,7 @@ public class MainActivity extends Activity {
         pictureIo.execute(() -> present(items, sizes, online, ticket));
     }
 
-    /** Cuts the pictures for [items] to size and shows them all at once, unless another set was asked for since. */
+    /** Cuts the pictures for [items] to size and shows them all at once, unless another page was asked for since. */
     private void present(List<Shelf.Item> items, int[][] sizes, boolean online, int ticket) {
         List<Bitmap> pictures = new ArrayList<>();
         Bitmap[] backdrops = new Bitmap[Shelf.COUNT];
@@ -749,17 +792,23 @@ public class MainActivity extends Activity {
             System.arraycopy(backdrops, 0, heroes, 0, Shelf.COUNT);
             showShelf(items, pictures);
             int focused = shelf.posters.indexOf(getCurrentFocus());
-            sceneView.hero(heroes[Math.max(0, focused)]);
+            // Folded, the sky stays clear of backdrops.
+            sceneView.hero(shelf.collapsed() ? null : heroes[Math.max(0, focused)]);
         });
     }
 
-    /** Puts every title's pictures on disk, so paging through the sets is instant, and lets go of old ones. */
-    private void prefetchPictures(List<Shelf.Item> pool, int[][] sizes) {
+    /**
+     * Puts every title's pictures in [pool] on disk, so paging through is instant, and lets go of any that
+     * neither the pool nor the pages kept ([keep]) still show.
+     */
+    private void prefetchPictures(List<Shelf.Item> pool, List<Shelf.Item> keep, int[][] sizes) {
         Set<String> keys = new HashSet<>();
         int hw = Math.round(Ui.dp(this, 336)), hh = Math.round(Ui.dp(this, 200));
-        for (Shelf.Item it : pool) {
-            keys.add(Net.keyFor(it.image, sizes[0][0], sizes[0][1]));
-            keys.add(Net.keyFor(it.backdrop, hw, hh));
+        for (List<Shelf.Item> l : Arrays.asList(pool, keep)) {
+            for (Shelf.Item it : l) {
+                keys.add(Net.keyFor(it.image, sizes[0][0], sizes[0][1]));
+                keys.add(Net.keyFor(it.backdrop, hw, hh));
+            }
         }
         for (Shelf.Item it : pool) {
             shelfSource.fetchPicture(it.image, sizes[0][0], sizes[0][1]);
@@ -767,9 +816,7 @@ public class MainActivity extends Activity {
         }
         shelfSource.prunePictures(keys);
         // Any card still without its picture (another download had it in hand) gets it from disk now.
-        handler.post(() -> {
-            if (shelfSets != null) showSet(shelfSet);
-        });
+        handler.post(() -> showSet(shelfSet));
     }
 
     // ------------------------------------------------------------------ keeping fresh

@@ -99,7 +99,7 @@ final class Sports {
                         JSONArray ev = new JSONObject(Net.getString(
                                 "https://www.thesportsdb.com/api/v1/json/123/eventsnext.php?id=" + team[1])).optJSONArray("events");
                         if (ev != null && ev.length() > 0) {
-                            out.put(team[0], ev.getJSONObject(0));
+                            out.put(team[0], upcoming(ev.getJSONObject(0), team[0], team[1]));
                             any = true;
                         }
                     } catch (IOException | JSONException e) {
@@ -122,6 +122,28 @@ final class Sports {
             if (!any) throw new IOException("No sports service answered");
             Net.writeAtomically(file, out.toString());
             return out;
+        }
+
+        /**
+         * [e], the team's "next" event, unless it should be over by now: TheSportsDB can keep a finished
+         * match as next for hours (no score, no status), and the free key gives only that one. Then the
+         * league's next fixture with [teamId] in it, if there is one (e.g. the series' next T20I).
+         */
+        private static JSONObject upcoming(JSONObject e, String key, String teamId) {
+            long length = key.equals("cricket") ? cricketLength(e.optString("strLeague")) : 2 * HOUR;
+            if (start(e) + length > System.currentTimeMillis()) return e;
+            try {
+                JSONArray ev = new JSONObject(Net.getString("https://www.thesportsdb.com/api/v1/json/123/eventsnextleague.php?id="
+                        + e.optString("idLeague"))).optJSONArray("events");
+                for (int i = 0; ev != null && i < ev.length(); i++) {
+                    JSONObject n = ev.getJSONObject(i);
+                    boolean ours = teamId.equals(n.optString("idHomeTeam")) || teamId.equals(n.optString("idAwayTeam"));
+                    if (ours && start(n) + length > System.currentTimeMillis()) return n;
+                }
+            } catch (IOException | JSONException ignored) {
+                // keep the finished one; the card stops counting down for it
+            }
+            return e;
         }
 
         /** A team's crest at [px] wide: from disk, else downloaded (TheSportsDB's small size) and kept. */
@@ -161,10 +183,15 @@ final class Sports {
         m.awayBadge = e.optString("idAwayTeam");
         m.homeBadgeUrl = e.optString("strHomeTeamBadge");
         m.awayBadgeUrl = e.optString("strAwayTeamBadge");
+        m.start = start(e);
+        return m.start > 0 ? m : null;
+    }
+
+    /** When TheSportsDB's event [e] starts (0 if it doesn't say). */
+    private static long start(JSONObject e) {
         String stamp = e.optString("strTimestamp");
         if (stamp.isEmpty()) stamp = e.optString("dateEvent") + "T" + e.optString("strTime", "00:00:00");
-        m.start = parseUtc(stamp.replace("+00:00", "").replace("Z", ""));
-        return m.start > 0 ? m : null;
+        return parseUtc(stamp.replace("+00:00", "").replace("Z", ""));
     }
 
     static Race race(JSONObject data) {

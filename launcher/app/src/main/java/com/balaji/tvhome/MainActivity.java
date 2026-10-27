@@ -702,7 +702,10 @@ public class MainActivity extends Activity {
                         handler.post(() -> usePool(cached, -1, null));
                     }
                 }
-                boolean stale = shelfSource.age(now) >= SHELF_EVERY_MS;
+                // Four hours old, or holding titles that have aged out of the two weeks (then the gaps are
+                // filled at once, as the sports card moves on from a finished match).
+                boolean stale = shelfSource.age(now) >= SHELF_EVERY_MS
+                        || (pool != null && Shelf.fresh(pool, now).size() < pool.size());
                 if (!fresh && (quiet || !online || (!stale && pool != null))) return;
                 List<Shelf.Item> got = shelfSource.fetch(now, installed);
                 handler.post(() -> {
@@ -748,9 +751,9 @@ public class MainActivity extends Activity {
 
     /** Takes [pool] as the shelf's titles, dealt into pages, and shows page [to] (-1: stay on the current page). */
     private void usePool(List<Shelf.Item> pool, int to, String note) {
-        shelfPool = pool;
+        shelfPool = Shelf.fresh(pool, System.currentTimeMillis()); // only the last two weeks, however old the list
         shelfSets.clear();
-        shelfSets.addAll(Shelf.pages(pool));
+        shelfSets.addAll(Shelf.pages(shelfPool));
         if (shelfSets.isEmpty()) return;
         showSet(Math.min(to >= 0 ? to : shelfSet, shelfSets.size() - 1));
         if (note != null) shelf.note(note);

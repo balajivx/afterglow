@@ -400,6 +400,22 @@ final class Shelf {
      * newest title left in its language ([places]), else, that language run out, the newest left of any;
      * at most three from one app in a page, shown newest first. A last page of fewer than three is left out.
      */
+    /**
+     * [pool] without the titles that came out more than two weeks before [now]: a kept pool ages (up to
+     * four hours between fetches, days when offline), the window doesn't.
+     */
+    static List<Item> fresh(List<Item> pool, long now) {
+        java.text.SimpleDateFormat f = new java.text.SimpleDateFormat("yyyy-MM-dd", Locale.US);
+        f.setTimeZone(Weather.ZONE);
+        Calendar cal = Calendar.getInstance(Weather.ZONE);
+        cal.setTimeInMillis(now);
+        cal.add(Calendar.DAY_OF_MONTH, -14);
+        String since = f.format(cal.getTime());
+        List<Item> out = new ArrayList<>();
+        for (Item it : pool) if (it.released.isEmpty() || it.released.compareTo(since) >= 0) out.add(it);
+        return out;
+    }
+
     static List<List<Item>> pages(List<Item> pool) {
         List<Item> left = new ArrayList<>(pool);
         List<List<Item>> out = new ArrayList<>();

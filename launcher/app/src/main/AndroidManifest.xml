@@ -30,7 +30,8 @@
         android:label="Afterglow"
         android:allowBackup="false"
         android:hardwareAccelerated="true"
-        android:theme="@style/AppTheme">
+        android:theme="@style/AppTheme"
+        android:networkSecurityConfig="@xml/network">
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -44,5 +45,20 @@
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
         </activity>
+
+        <!-- Picture hotkeys on the number keys, in any app. Turned on by ./hotkeys.sh (or Settings >
+             Accessibility > Afterglow picture keys). -->
+        <service
+            android:name=".Hotkeys"
+            android:exported="false"
+            android:label="@string/hotkeys_name"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/hotkeys" />
+        </service>
     </application>
 </manifest>

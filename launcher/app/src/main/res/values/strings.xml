@@ -3,4 +3,6 @@
     <string name="shelf_head">New and top rated on your apps</string>
     <!-- TMDB's terms ask for this credit; TMDB's streaming availability is supplied by JustWatch. -->
     <string name="credit_tmdb">Data from TMDB · streaming info by JustWatch</string>
+    <string name="hotkeys_name">Afterglow picture keys</string>
+    <string name="hotkeys_about">The remote\'s number keys switch the picture (Sports, Movies…) in any app. Reads no screen content.</string>
 </resources>

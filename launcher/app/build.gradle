@@ -16,6 +16,8 @@ android {
         versionCode 11
         versionName "11.0"
         buildConfigField "String", "TMDB_TOKEN", "\"${tmdb.getProperty("tmdb.token", "")}\""
+        // The TV's IP control pre-shared key, for the picture hotkeys (same file: bravia.psk=...).
+        buildConfigField "String", "BRAVIA_PSK", "\"${tmdb.getProperty("bravia.psk", "")}\""
     }
     buildFeatures { buildConfig true }
     compileOptions {

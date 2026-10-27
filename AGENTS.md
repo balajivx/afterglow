@@ -31,8 +31,9 @@ it. Without it the shelf stays empty and everything else works.
 | `ArtView.java` | Base for focusable pictures: fine ring, colour change, nothing grows |
 | `FadeFrame.java` | The page: fades children out at the screen's bottom edge |
 | `Net.java` | HTTP GET with caps, atomic file writes, picture decode/crop/cache |
+| `Hotkeys.java` | Picture hotkeys: an accessibility service that takes the remote's 0-9 in any app and applies `hotkey_N` profiles from `config.xml` through Sony's picture API at `http://127.0.0.1/sony/video` (IP control, `bravia.psk`); a small fading card says what happened. Turned on by `hotkeys.sh`. Its card times its own fade: the TV has animations off (scale 0), which ends `ValueAnimator`s at once |
 
-Resources: `res/values/config.xml` (dock order, hidden apps, weather place, columns, effects level),
+Resources: `res/values/config.xml` (dock order, hidden apps, weather place, columns, effects level, picture hotkeys),
 `res/values/strings.xml`, `res/layout/activity_main.xml` (slot positions in dp), `res/font/` (Open Runde),
 `res/drawable/ph_*.xml` (Phosphor icons).
 
@@ -54,6 +55,10 @@ Resources: `res/values/config.xml` (dock order, hidden apps, weather place, colu
 - No network or disk on the main thread; every source caches to `cacheDir` and refreshes on a timer only
   while the launcher is in front.
 - Comments explain what and why in plain words; match the existing style.
+- This TV has system animations switched off: don't rely on `ValueAnimator` for anything that must be seen
+  (use `Ui.Tween` / `Ui.now()`). Apps can't close other apps here (`killBackgroundProcesses` is refused);
+  `quiet-apps.sh` restricts the streaming apps' background running instead (live cricket dropped frames
+  when they idled in the 3 GB of memory).
 
 ## Data sources
 

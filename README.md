@@ -38,6 +38,40 @@ A slow aurora and a few twinkling stars behind frosted-glass cards. A soft light
 afterglow) shines in the colour of whatever you're on. Moving around is calm: a thin ring and a colour change, nothing jumps
 or grows.
 
+
+## Picture keys (the remote's number keys)
+
+In any app, the number keys switch the picture: **1** Sports, **2** Movies, **3** TV shows, **4** Night, and
+**0** shows what each key does. A small card at the top says what changed. The profiles are in
+`launcher/app/src/main/res/values/config.xml` (`hotkey_1`…), so you can change them or add 5 to 9.
+
+They use Sony's IP control on the TV itself, which needs a key, once:
+
+1. On the TV: **Settings → Network & Internet → Home network → IP control**. Set **Authentication** to
+   **Normal and Pre-Shared Key**, then set a **Pre-Shared Key** (any word).
+2. Put the same word in `launcher/tmdb.properties` as `bravia.psk=yourword`, then **Build and install**.
+3. Run `./hotkeys.sh` once (turns the keys on; or TV Settings → Accessibility → Afterglow picture keys).
+
+Motionflow (how smooth fast motion looks) isn't reachable through Sony's IP control, but every picture mode
+remembers its own. Set it once per mode in the TV's menu (Picture → Advanced settings → Motion), after
+pressing the key that picks that mode (this X85J offers Auto, Custom and Off): **1 Sports (Custom mode):
+Motionflow Custom, Smoothness at the highest step, Clearness at Min**; 2 Movies and 4 Night (Cinema mode):
+Off (or Auto if pans look jerky); 3 TV shows (Standard): Auto.
+
+**For smooth live cricket**, as measured on this TV during a match:
+
+- **Set SonyLIV's quality to 1080p, not Auto.** On Auto it fell to 360p at 25 fps; on 1080p it held 50 fps.
+- **Keep streaming apps from idling in the background**: run `./quiet-apps.sh` once (undo: `./quiet-apps.sh
+  undo`). The TV has 3 GB of memory; with Netflix, Prime, JioHotstar and Cricfy idling, SonyLIV lost 8 frames
+  in 95 s of play, and none in 2 minutes once they were restricted. The apps still open and play as before.
+- **Motionflow Custom with Smoothness at the highest step** on the Sports key's picture mode (above).
+
+Why it can stutter at all: the TV's apps always draw at 60 Hz, while cricket
+streams are 50 or 25 frames a second, so frames can't be shown for equal times (50 fps: every 5th frame is
+held twice; 25 fps: frames alternate 33 ms and 50 ms). SonyLIV sends 50 fps at its best quality but drops to
+25 fps at 360p when its stream falls back; Cricfy is 25 fps throughout. Motionflow's Smoothness evens it out best,
+and a 50 fps stream (SonyLIV or JioHotstar on its highest quality, not Auto) gives it twice the motion.
+
 ## Set it up
 
 You need a Mac, an Android TV on the same Wi-Fi, and about ten minutes.

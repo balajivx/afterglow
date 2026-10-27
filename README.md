@@ -53,7 +53,9 @@ They use Sony's IP control on the TV itself, which needs a key, once:
 3. Run `./hotkeys.sh` once (turns the keys on; or TV Settings → Accessibility → Afterglow picture keys).
 
 Motionflow (how smooth fast motion looks) isn't reachable through Sony's IP control, but every picture mode
-remembers its own. Set it once per mode in the TV's menu (Picture → Advanced settings → Motion), after
+remembers its own. The TV keeps separate picture settings per input: set these **while an app is playing**
+(the Picture menu then says **Apps** under its title). Opened from the home screen, the menu can go to HDMI 1
+instead, which the keys don't touch. Set it once per mode in the TV's menu (Picture → Advanced settings → Motion), after
 pressing the key that picks that mode (this X85J offers Auto, Custom and Off): **1 Sports (Custom mode):
 Motionflow Custom, Smoothness at the highest step, Clearness at Min**; 2 Movies and 4 Night (Cinema mode):
 Off (or Auto if pans look jerky); 3 TV shows (Standard): Auto.

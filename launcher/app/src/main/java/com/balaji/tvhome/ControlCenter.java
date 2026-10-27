@@ -43,11 +43,12 @@ import java.util.concurrent.Executors;
  * Left, the controls, laid out like a phone's: StandBy (the screensaver now), Wi-Fi and Bluetooth with
  * their state, Inputs, Settings, and two rows of round buttons: voice search, sound, a sleep timer,
  * picture off; Cast (Google Cast's settings, the TV's cast name under it), the box on a set HDMI port
- * (config.xml: quick_input), the screensaver's settings, restart (on a second press). Sound is where
+ * (config.xml: quick_input), the screensaver's settings (StandBy starts it), restart (on a second press). Sound is where
  * AirPlay would be, AirPlay being switched off on this TV. Right: the picture keys' profiles, volume (the TV's, which drives the Streambar over HDMI-CEC),
  * and the apps used lately with the memory each holds and when it was used (OK opens one, its × closes
  * it), the memory free, and Close all (the running apps, but never those on config.xml's
- * close_all_keep). Closing and the memory figures go through the TV's own debugging service (Adb):
+ * close_all_keep), and Free storage (caches, and the unused apps on config.xml's storage_clear and
+ * storage_unupdate). Closing, cleaning and the memory figures go through the TV's own debugging service (Adb):
  * Android lets no app close another or read its memory, and the TV asks once to allow it. There's no Close all: this
  * TV's Android refuses killBackgroundProcesses to every app ("Invalid packageName"), and each app's own
  * memory isn't shown, the system's memory report being for system apps only. quiet-apps.sh keeps the
@@ -68,7 +69,7 @@ final class ControlCenter extends ViewGroup {
     private final Paint scrimP = new Paint();
     private final Tile standby, wifi, bluetooth, inputs, settings, mic, sound, sleep, pictureOff;
     private final Tile cast, quickInput, screensaver, restart;
-    private final Tile volDown, volUp, mute, closeAll;
+    private final Tile volDown, volUp, mute, closeAll, freeStorage;
     private final Tile volume;
     private final List<Tile> profiles = new ArrayList<>(), recents = new ArrayList<>(), closers = new ArrayList<>();
     private final List<Tile> rounds;
@@ -99,7 +100,7 @@ final class ControlCenter extends ViewGroup {
         pictureOff = add(new Tile(a, Tile.ROUND, R.drawable.ph_monitor_bold, "Picture off"));
         cast = add(new Tile(a, Tile.ROUND, R.drawable.ph_screencast_bold, "Cast"));
         quickInput = add(new Tile(a, Tile.ROUND, R.drawable.ph_television_simple_bold, a.getString(R.string.quick_input)));
-        screensaver = add(new Tile(a, Tile.ROUND, R.drawable.ph_mountains_bold, "Screensaver"));
+        screensaver = add(new Tile(a, Tile.ROUND, R.drawable.ph_mountains_bold, "Saver settings")); // StandBy starts it
         restart = add(new Tile(a, Tile.ROUND, R.drawable.ph_arrow_clockwise_bold, "Restart"));
         rounds = java.util.Arrays.asList(mic, sound, sleep, pictureOff, cast, quickInput, screensaver, restart);
         for (Tile t : rounds) t.diameter = Ui.dp(a, 56f);
@@ -128,6 +129,8 @@ final class ControlCenter extends ViewGroup {
         }
         closeAll = add(new Tile(a, Tile.WIDE, R.drawable.ph_broom_bold, "Close all"));
         closeAll.onPress = this::closeAll;
+        freeStorage = add(new Tile(a, Tile.WIDE, R.drawable.ph_hard_drives_bold, "Free storage"));
+        freeStorage.onPress = this::freeStorage;
 
         standby.onPress = () -> {
             close();
@@ -416,7 +419,8 @@ final class ControlCenter extends ViewGroup {
             t.onPress = () -> launch(getContext().getPackageManager().getLeanbackLaunchIntentForPackage(r.pkg));
             x.onPress = () -> closeApps(java.util.Collections.singletonList(r.pkg), t);
         }
-        if (closeAll.sub.isEmpty() || closeAll.sub.startsWith("Keeps")) closeAll.set("Keeps the screensaver and the TV app", false);
+        if (closeAll.sub.isEmpty() || closeAll.sub.equals("Frees memory")) closeAll.set("Frees memory", false);
+        if (freeStorage.sub.isEmpty() || freeStorage.sub.endsWith(" MB free")) freeStorage.set(storageFree() + " MB free", false);
         invalidate();
     }
 
@@ -483,6 +487,37 @@ final class ControlCenter extends ViewGroup {
                 loadRecents();
                 handler.postDelayed(() -> where.set(done, false), 300);
             });
+        });
+    }
+
+    /** The internal storage free for apps, in MB. */
+    private static long storageFree() {
+        return new android.os.StatFs(android.os.Environment.getDataDirectory().getPath()).getAvailableBytes() >> 20;
+    }
+
+    /**
+     * Every app's cache, then the data and the updates of config.xml's unused apps; how much came free.
+     * Safe to press any time: with nothing left to clear, each step does nothing.
+     */
+    private void freeStorage() {
+        Context c = getContext();
+        freeStorage.set("Cleaning…", false);
+        io.execute(() -> {
+            long before = storageFree();
+            StringBuilder cmd = new StringBuilder("pm trim-caches 100G");
+            for (String p : c.getResources().getStringArray(R.array.storage_clear)) cmd.append("; pm clear ").append(p);
+            for (String p : c.getResources().getStringArray(R.array.storage_unupdate)) cmd.append("; pm uninstall-system-updates ").append(p);
+            String result;
+            try {
+                Adb.shell(c, cmd.toString());
+                prefs(c).edit().putBoolean("adb_ok", true).apply();
+                long freed = Math.max(0, storageFree() - before);
+                result = (freed > 0 ? "Freed " + freed + " MB · " : "") + storageFree() + " MB free";
+            } catch (IOException e) {
+                result = why(e);
+            }
+            String done = result;
+            handler.post(() -> freeStorage.set(done, false));
         });
     }
 
@@ -621,7 +656,8 @@ final class ControlCenter extends ViewGroup {
         if (ci >= 0) return new float[]{rx, top + 178 + ci * 38, 306, 32};
         int xi = closers.indexOf(v);
         if (xi >= 0) return new float[]{rx + 318, top + 178 + xi * 38, 32, 32};
-        if (v == closeAll) return new float[]{rx, top + 372, 352, 40};
+        if (v == closeAll) return new float[]{rx, top + 372, 172, 40};
+        if (v == freeStorage) return new float[]{rx + 180, top + 372, 172, 40};
         return null;
     }
 

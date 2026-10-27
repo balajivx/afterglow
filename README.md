@@ -47,10 +47,13 @@ now), **Wi-Fi** and **Bluetooth** (their state; OK opens their settings), **Inpu
 buttons: **Voice** (Google Assistant), **Sound** (Sony's Display & Sound, where the Streambar's settings are),
 **Sleep** (each press: 30, 60, 90 min, off; the TV goes to standby when it runs out), **Picture off** (dark
 screen, sound on; any key brings it back), **Cast** (with the TV's cast name), **Fire TV** (straight to HDMI 4,
-set in `config.xml`), **Screensaver** settings, and **Restart** (press twice). Right: the five picture modes,
+set in `config.xml`), **Saver settings** (which screensaver, and when; StandBy starts it now), and
+**Restart** (press twice). Right: the five picture modes,
 volume (it drives the Streambar), and **Recent apps** with the memory each one holds now: OK opens one, its
 **×** closes it at once, and **Close all** closes every running app except those on `close_all_keep` in
-`config.xml` (the screensaver, Sony's TV app, the Play Store). The **6** key is Picture off from anywhere.
+`config.xml` (the screensaver, Sony's TV app, the Play Store). **Free storage** beside it clears every app's
+cache and the leftovers of apps that are switched off or unused (`storage_clear`, `storage_unupdate`): the TV
+has only 4 GB for apps, and your own apps live on the USB drive. The **6** key is Picture off from anywhere.
 
 Closing apps and reading their memory use the TV's own debugging service (the same one the Mac's adb uses):
 Android lets no app do either otherwise. The TV asked once to allow it ("Always allow" was ticked). If closing

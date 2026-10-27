@@ -72,6 +72,23 @@
         <item>com.android.vending</item>
     </string-array>
 
+    <!-- Control Center's Free storage: clears every app's cache, then the data of these (switched off or
+         unused: Google TV's own home screen, Play Games, AirPlay, Sony's browser engine) and removes the
+         updates of these (they're back to the TV's own versions). The TV has 4 GB for apps; yours live on
+         the USB drive. -->
+    <string-array name="storage_clear">
+        <item>com.google.android.apps.tv.launcherx</item>
+        <item>com.google.android.play.games</item>
+        <item>com.sony.dtv.airplayapp</item>
+        <item>com.vewd.core.service</item>
+    </string-array>
+    <string-array name="storage_unupdate">
+        <item>com.google.android.apps.tv.launcherx</item>
+        <item>com.google.android.play.games</item>
+        <item>com.sony.dtv.promos</item>
+        <item>com.google.android.videos</item>
+    </string-array>
+
     <string-array name="hotkey_1">
         <item>Sports</item>
         <item>pictureMode=custom</item>

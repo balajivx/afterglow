@@ -57,12 +57,17 @@ The keys also set **Motionflow** (how smooth fast motion looks): 1 Sports **Cust
 **Auto**, 4 Night **Off**. 3 Gaming uses Sony's Game mode, which turns motion processing off itself to keep
 input lag low. For a console on HDMI, also set that input's **HDMI signal format** to **Enhanced** (TV
 Settings, External inputs) for 4K at 120 Hz on HDMI 3 or 4. Sony's IP control can't reach Motionflow, so the key works Sony's own picture
-menu for you: it runs along the bottom of the screen for a few seconds, then closes. Press the keys while
-something is playing in an app: the menu then holds the settings for **Apps**, and the key only ever changes
-those (never HDMI 1's or the TV tuner's; if Sony's menu names another input, the card says so and nothing
-changes). Set **Smoothness 2** and **Clearness Min** once by hand (gear, Picture settings, Motion,
+menu for you: it runs along the bottom of the screen for a few seconds, then closes. It works in apps and on
+HDMI inputs alike (a Fire TV Stick on HDMI 4, say): each input keeps its own picture settings, and the key
+changes those of the input that's playing (it checks Sony's menu names that input before touching anything,
+and settings an input doesn't have, like the light sensor on HDMI, are skipped). Set **Smoothness 2** and
+**Clearness Min** once by hand for each input you watch sport on (gear, Picture settings, Motion,
 Motionflow, with Motionflow on Custom); they stay put as Motionflow changes, and only key 1 (the only one on
 Custom) uses them. Max looked smoother on pans but made a hit ball break up and jump.
+
+**Fire TV Stick (or any streaming box) on HDMI:** turn on its **Match Original Frame Rate** (Fire TV:
+Settings, Display & Sounds, Display). Without it the stick sends 60 Hz whatever it plays, so 25 and 50 fps
+cricket judders before it reaches the TV; with it, it switches to 50 Hz for them.
 
 **For smooth live cricket**, as measured on this TV during a match:
 

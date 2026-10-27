@@ -37,22 +37,23 @@ import java.util.concurrent.Executors;
 /**
  * The remote's number keys, wherever the TV is (inside Hotstar or Netflix too): each switches the picture
  * to a profile from config.xml (hotkey_1 to hotkey_9: Sports, Movies...) through Sony's own picture API
- * on the TV (http://127.0.0.1/sony/video: IP control, signed with the pre-shared key from the build).
+ * on the TV (http://127.0.0.1/sony/: IP control, signed with the pre-shared key from the build).
  * 0 shows what each key does. Keys with no profile do what they always did.
  *
  * Motionflow isn't in Sony's API, and on this TV it doesn't follow the picture mode, so a profile's
  * motionflow (auto, custom, off) is set in Sony's own picture menu, the way a person would, with remote
- * presses sent over IP control (IRCC): the gear (Quick Settings), Picture settings (opened like this
- * over a playing app, it's the menu for "Apps"), down to Motion and Motionflow, the value stepped round,
- * the menu closed. Accessibility only reads which row is highlighted. It shows for a few seconds, and
- * only ever touches the Apps settings, never an HDMI input's or the TV's. Smoothness and Clearness stay
+ * presses sent over IP control (IRCC): the gear (Quick Settings), Picture settings, down to Motion and
+ * Motionflow, the value stepped round, the menu closed. Accessibility only reads which row is highlighted.
+ * It shows for a few seconds. Each input keeps its own picture settings, and the menu can open on one
+ * other than the one playing, so it only acts when the menu names the input the TV says is playing
+ * ("Apps" for an app, "HDMI 4" for a Fire TV Stick on HDMI 4). Smoothness and Clearness stay
  * as set by hand: Sony ignores them set any other way, and they keep their values as Motionflow changes.
  *
  * An accessibility service, as that's the only way Android lets an app see keys meant for other apps and
  * work Sony's menu; it reads no other screen. A small card at the top says what happened, then fades.
  */
 public class Hotkeys extends AccessibilityService {
-    private static final String API = "http://127.0.0.1/sony/video";
+    private static final String API = "http://127.0.0.1/sony/";
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final ExecutorService io = Executors.newSingleThreadExecutor();
@@ -108,6 +109,9 @@ public class Hotkeys extends AccessibilityService {
                 else rest.add(s);
             }
             String failed = mode == null ? null : set(Arrays.asList(mode));
+            // Some settings don't apply to every input (no light sensor for HDMI, say); one the TV can't
+            // take fails the whole batch, so those are left out.
+            if (failed == null) rest.retainAll(available(rest));
             if (failed == null && !rest.isEmpty()) failed = set(rest);
             String detail = failed != null ? failed
                     : mode == null ? "Picture adjusted" : "Picture mode: " + title(mode.substring(mode.indexOf('=') + 1));
@@ -150,13 +154,34 @@ public class Hotkeys extends AccessibilityService {
      * time, each given a moment to land); the menu is always closed again.
      */
     private String setMotion(Motion m) {
+        String input = playingInput();
+        if (input == null) return "Motionflow not changed (couldn't tell what's playing)";
         // Sony's menu is slow to settle now and then; a second go nearly always lands.
-        String how = walkOnce(m);
+        String how = walkOnce(m, input);
         if (!how.equals(done(m))) {
             android.util.Log.i("Hotkeys", "Motionflow, first go: " + how);
-            how = walkOnce(m);
+            how = walkOnce(m, input);
         }
         return how;
+    }
+
+    /**
+     * The input playing, as Sony's picture menu names it: "Apps" for an app, "HDMI 4" for whatever is on
+     * HDMI port 4 (the API calls a device it knows over HDMI-CEC by its own name, so the port is read from
+     * its address); null when it can't tell.
+     */
+    private static String playingInput() {
+        try {
+            JSONObject r = call("avContent", "getPlayingContentInfo", new JSONArray());
+            JSONArray err = r.optJSONArray("error");
+            if (err != null) return err.optInt(0) == 7 ? "Apps" : null; // 7: no input is playing, an app is
+            String uri = r.getJSONArray("result").getJSONObject(0).optString("uri");
+            java.util.regex.Matcher port = java.util.regex.Pattern.compile("[?&]port=(\\d+)").matcher(uri);
+            boolean hdmi = uri.startsWith("extInput:hdmi") || uri.startsWith("extInput:cec");
+            return hdmi && port.find() ? "HDMI " + port.group(1) : null;
+        } catch (IOException | JSONException e) {
+            return null;
+        }
     }
 
     /** What [walkMenu] says when it worked. */
@@ -164,10 +189,10 @@ public class Hotkeys extends AccessibilityService {
         return "Motionflow " + title(m.flow);
     }
 
-    private String walkOnce(Motion m) {
+    private String walkOnce(Motion m, String input) {
         press(GEAR);
         try {
-            return walkMenu(m);
+            return walkMenu(m, input);
         } catch (RuntimeException e) {
             // Sony's screens changed under us; never let that take the home screen down with it.
             return "Motionflow: the menu went its own way";
@@ -181,8 +206,8 @@ public class Hotkeys extends AccessibilityService {
         }
     }
 
-    /** The steps from Quick Settings to Motionflow's card; how it went. */
-    private String walkMenu(Motion m) {
+    /** The steps from Quick Settings to Motionflow's card, for the settings of [playing]; how it went. */
+    private String walkMenu(Motion m, String playing) {
         // Quick Settings opens on its Picture settings tile.
         AccessibilityNodeInfo tile = null;
         for (int i = 0; i < 20 && tile == null; i++) {
@@ -193,15 +218,15 @@ public class Hotkeys extends AccessibilityService {
             return "Motionflow: Quick Settings didn't open on Picture settings";
         }
         press(CONFIRM);
-        // Whose settings the menu shows. It opens with the input it showed last time and corrects itself a
-        // moment later, so give it up to 3 s to say Apps before taking its word for another input.
+        // Whose settings the menu shows. It can open with the input it showed last time and correct itself
+        // a moment later, so give it up to 3 s to name [playing] before taking its word for another input.
         String input = "";
-        for (int i = 0; i < 30 && !input.equals("Apps"); i++) {
+        for (int i = 0; i < 30 && !input.equals(playing); i++) {
             input = text(menu(), "decor_summary");
-            if (!input.equals("Apps")) pause(100);
+            if (!input.equals(playing)) pause(100);
         }
         if (input.isEmpty()) return "Motionflow: the menu didn't open";
-        if (!input.equals("Apps")) return "Motionflow not changed (menu was for " + input + ")";
+        if (!input.equals(playing)) return "Motionflow not changed (menu was for " + input + ", not " + playing + ")";
         if (!moveTo("Motion")) return "Motionflow: no Motion in the menu";
         press(CONFIRM); // opens the Motion group
         if (!moveTo("Motionflow")) return "Motionflow: not in the menu";
@@ -380,6 +405,25 @@ public class Hotkeys extends AccessibilityService {
         }
     }
 
+    /** Those of [settings] ("target=value") the TV offers for the input playing now; all of them if it won't say. */
+    private static List<String> available(List<String> settings) {
+        try {
+            JSONArray r = call("getPictureQualitySettings", new JSONObject()).optJSONArray("result");
+            JSONArray all = r == null ? null : r.optJSONArray(0);
+            if (all == null) return settings;
+            java.util.Set<String> on = new java.util.HashSet<>();
+            for (int i = 0; i < all.length(); i++) {
+                JSONObject t = all.optJSONObject(i);
+                if (t != null && t.optBoolean("isAvailable", true)) on.add(t.optString("target"));
+            }
+            List<String> out = new ArrayList<>();
+            for (String s : settings) if (on.contains(s.substring(0, s.indexOf('=')).trim())) out.add(s);
+            return out;
+        } catch (IOException | JSONException e) {
+            return settings;
+        }
+    }
+
     private String currentMode() {
         try {
             JSONArray r = call("getPictureQualitySettings", new JSONObject().put("target", "pictureMode")).optJSONArray("result");
@@ -391,9 +435,14 @@ public class Hotkeys extends AccessibilityService {
     }
 
     private static JSONObject call(String method, JSONObject params) throws IOException, JSONException {
+        return call("video", method, new JSONArray().put(params));
+    }
+
+    /** [method] of Sony's [service] (video, avContent...) with [params]; its answer. */
+    private static JSONObject call(String service, String method, JSONArray params) throws IOException, JSONException {
         byte[] body = new JSONObject().put("method", method).put("id", 1).put("version", "1.0")
-                .put("params", new JSONArray().put(params)).toString().getBytes(StandardCharsets.UTF_8);
-        HttpURLConnection c = (HttpURLConnection) new URL(API).openConnection();
+                .put("params", params).toString().getBytes(StandardCharsets.UTF_8);
+        HttpURLConnection c = (HttpURLConnection) new URL(API + service).openConnection();
         try {
             c.setConnectTimeout(3000);
             c.setReadTimeout(5000);

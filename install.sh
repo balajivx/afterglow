@@ -8,4 +8,6 @@ adb shell pm install -r /data/local/tmp/tvhome.apk
 adb shell rm /data/local/tmp/tvhome.apk
 # Lets the Wi-Fi pill read the network name
 adb shell pm grant $PKG android.permission.ACCESS_FINE_LOCATION || true
+# Lets the home screen turn the picture keys back on if Android ever turns them off
+adb shell pm grant $PKG android.permission.WRITE_SECURE_SETTINGS || true
 echo "Installed. Next: ./activate.sh"

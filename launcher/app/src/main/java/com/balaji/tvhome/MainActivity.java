@@ -246,6 +246,7 @@ public class MainActivity extends Activity {
     protected void onResume() {
         super.onResume();
         resumed = true;
+        keepHotkeysOn();
         sceneView.setRunning(true);
         if (reloadNeeded()) loadApps();
         if (getCurrentFocus() == null) focusDock();
@@ -312,6 +313,25 @@ public class MainActivity extends Activity {
             }
         } else {
             lastBack = now;
+        }
+    }
+
+    /**
+     * Turns the picture keys (Hotkeys) back on if they're off: Android turns off an accessibility service
+     * that keeps crashing, and Sony's updates can clear the list. Needs WRITE_SECURE_SETTINGS, which
+     * install.sh grants; without it this does nothing.
+     */
+    private void keepHotkeysOn() {
+        if (checkSelfPermission(android.Manifest.permission.WRITE_SECURE_SETTINGS) != PackageManager.PERMISSION_GRANTED) return;
+        String me = new android.content.ComponentName(this, Hotkeys.class).flattenToString();
+        android.content.ContentResolver cr = getContentResolver();
+        String on = android.provider.Settings.Secure.getString(cr, android.provider.Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES);
+        if (on != null && Arrays.asList(on.split(":")).contains(me)) return;
+        try {
+            android.provider.Settings.Secure.putString(cr, android.provider.Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES,
+                    on == null || on.isEmpty() || on.equals("null") ? me : on + ":" + me);
+            android.provider.Settings.Secure.putInt(cr, android.provider.Settings.Secure.ACCESSIBILITY_ENABLED, 1);
+        } catch (SecurityException ignored) {
         }
     }
 

@@ -70,6 +70,7 @@ public class Hotkeys extends AccessibilityService {
     @Override
     public void onDestroy() {
         super.onDestroy();
+        handler.removeCallbacksAndMessages(null); // nothing queued may run after this
         io.shutdownNow();
         if (card != null) card.remove();
     }
@@ -100,7 +101,7 @@ public class Hotkeys extends AccessibilityService {
         show(n + "  " + name, "Changing the picture…");
         List<String> settings = new ArrayList<>(Arrays.asList(profile).subList(1, profile.length));
         Motion motion = Motion.from(settings); // takes its settings out of the list
-        io.execute(() -> {
+        run(() -> {
             // The picture mode first, on its own: the rest are that mode's own settings.
             String mode = null;
             List<String> rest = new ArrayList<>();
@@ -377,10 +378,18 @@ public class Hotkeys extends AccessibilityService {
         }
         String line = keys.length() == 0 ? "No picture keys in config.xml" : keys.toString();
         show(line, "");
-        io.execute(() -> {
+        run(() -> {
             String mode = currentMode();
             if (mode != null) handler.post(() -> show(line, "Picture mode now: " + title(mode)));
         });
+    }
+
+    /** [work] on [io], unless the service is stopping (Android turns off a service that keeps crashing). */
+    private void run(Runnable work) {
+        try {
+            io.execute(work);
+        } catch (java.util.concurrent.RejectedExecutionException ignored) {
+        }
     }
 
     // ---- Sony's picture API (blocking: off the main thread)

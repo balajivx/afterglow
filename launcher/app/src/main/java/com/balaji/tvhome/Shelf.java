@@ -20,12 +20,10 @@ import java.util.Calendar;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -33,15 +31,14 @@ import java.util.concurrent.TimeUnit;
 
 
 /**
- * "New and top rated on your apps", from TMDB only: movies and shows released lately (a movie in cinemas
- * or on streaming in India; a show's series or its current season), streaming in India on the apps this
- * TV has. No animation (anime, cartoons) and no kids' shows. Lately is the last two weeks, reaching back
- * to 30, 60 or 90 days for a language with too few titles to fill its share (Telugu often does); an app
- * with none at all gets its own newest, from up to a year back. Within a language: rated titles (5+ votes)
- * best rated first, anything rated below 6.0 left out; then titles too new to be rated, most popular
- * first; the apps take turns, so every app shows up. They come in pages of six posters, each page three
- * Telugu, two English and one Hindi ([LANGUAGES]' shares) on as many apps as it can: each refresh deals a
- * new page of titles not shown before, and the arrows page back through the earlier ones (kept on disk).
+ * "New and top rated on your apps", from TMDB only: movies and shows released in the last two weeks
+ * (a movie in cinemas or on streaming in India; a show's series or its current season), streaming in India
+ * on the apps this TV has. No animation (anime, cartoons) and no kids' shows. Newest first: up to four
+ * pages of six, page 1 the most recent, each page three Telugu, two English and one Hindi ([LANGUAGES]'
+ * shares) while a language has titles left, the newest of the others filling in when it runs out. Titles
+ * rated below 6.0 (5+ votes) are left out; on the same day, rated titles best rated first, then the most
+ * popular. The arrows page through; refresh asks TMDB again and goes to the next page (page 1 when there's
+ * something new).
  *
  * The token comes from the build (launcher/tmdb.properties). TMDB's streaming availability is supplied by
  * JustWatch, and TMDB's terms ask that JustWatch be credited for it; nothing here talks to JustWatch.
@@ -51,16 +48,21 @@ final class Shelf {
     }
 
     static final int COUNT = 6;
-    /** At most this many titles to page through, from the first [MAX_ASKED] looked up. */
-    static final int POOL = 30, MAX_ASKED = 80;
+    /** At most [PAGES] pages of six to page through, so [POOL] titles, from the first [MAX_ASKED] looked up. */
+    static final int PAGES = 4, POOL = PAGES * COUNT, MAX_ASKED = 80;
 
     static final class Item {
-        /** [image]: the card's wide picture; [titled]: it already carries the title, so none is drawn on it; [lang]: "Telugu". */
-        final String title, meta, overview, image, backdrop, pkg, lang;
+        /**
+         * [image]: the card's wide picture; [titled]: it already carries the title, so none is drawn on it;
+         * [lang]: "Telugu"; [released]: "2026-10-21", when it came out (a show: its series or season).
+         */
+        final String title, meta, overview, image, backdrop, pkg, lang, released;
         final boolean titled;
 
-        Item(String title, String meta, String overview, String image, boolean titled, String backdrop, String pkg, String lang) {
+        Item(String title, String meta, String overview, String image, boolean titled, String backdrop, String pkg, String lang,
+             String released) {
             this.lang = lang;
+            this.released = released;
             this.title = title;
             this.meta = meta;
             this.overview = overview;
@@ -194,54 +196,61 @@ final class Shelf {
         return out;
     }
 
-    /** How far back a language looks, in days: further only while it has too few titles for its share. */
-    private static final int[] WINDOWS = {14, 30, 60, 90};
-    /** How far back an app with no titles at all looks for its own newest. */
-    private static final int[] APP_WINDOWS = {90, 365};
-
     /**
-     * Every title that qualifies (up to [POOL]), for the pages of six the shelf deals. TMDB answers in about
-     * a second, so the languages are asked side by side and the titles six at a time; a title is looked up
-     * once, however many windows ask for it. The pool keeps [LANGUAGES]' shares in order.
+     * Every title that qualifies, newest first (up to [POOL]), for the pages the shelf deals. TMDB answers
+     * in about a second, so the languages are asked side by side and the titles six at a time. The pool
+     * holds each language's newest, by [LANGUAGES]' shares while they last.
      */
     static List<Item> fetch(String token, Set<String> installed, long now) throws IOException {
         Map<Integer, Service> providers = new HashMap<>();
         for (Service s : SERVICES) if (installed.contains(s.pkg)) providers.put(s.tmdbId, s);
         if (providers.isEmpty()) return new ArrayList<>();
-        int n = LANGUAGES.length;
-        ExecutorService asks = Executors.newFixedThreadPool(6), langs = Executors.newFixedThreadPool(n);
-        Map<String, Future<JSONObject>> details = new ConcurrentHashMap<>();
+        java.text.SimpleDateFormat f = new java.text.SimpleDateFormat("yyyy-MM-dd", Locale.US);
+        f.setTimeZone(Weather.ZONE);
+        Calendar cal = Calendar.getInstance(Weather.ZONE);
+        cal.setTimeInMillis(now);
+        final String today = f.format(cal.getTime());
+        cal.add(Calendar.DAY_OF_MONTH, -14);
+        final String since = f.format(cal.getTime());
+        final String ids = TextUtils.join("|", providers.keySet());
+
+        ExecutorService pool = Executors.newFixedThreadPool(6);
         try {
-            List<Future<List<Item>>> asked = new ArrayList<>();
-            for (String[] l : LANGUAGES) {
-                int need = (int) Math.ceil(POOL * Double.parseDouble(l[2]) / 100);
-                asked.add(langs.submit(() -> titles(token, l, providers, need, WINDOWS, now, asks, details)));
+            List<Future<List<JSONObject>>> asked = new ArrayList<>();
+            for (String[] l : LANGUAGES) asked.add(pool.submit(() -> candidates(token, l[0], ids, since, today)));
+
+            // Each language's titles checked (details with where it streams, all at once), then newest first.
+            int n = LANGUAGES.length;
+            List<List<JSONObject>> found = new ArrayList<>();
+            List<List<Future<JSONObject>>> details = new ArrayList<>();
+            for (int k = 0; k < n; k++) {
+                List<JSONObject> c = result(asked.get(k));
+                found.add(c);
+                List<Future<JSONObject>> d = new ArrayList<>();
+                for (int i = 0; i < c.size() && i < MAX_ASKED / n; i++) {
+                    JSONObject r = c.get(i);
+                    String type = r.optString("_type");
+                    d.add(pool.submit(() -> tmdb(token, "/" + type + "/" + r.optInt("id"), type.equals("movie") ? MOVIE_DETAILS : DETAILS)));
+                }
+                details.add(d);
             }
             List<List<Item>> byLang = new ArrayList<>();
-            for (Future<List<Item>> f : asked) byLang.add(result(f, 150));
-
-            // An app with nothing above (aha's and SonyLIV's titles are thin on TMDB): its own newest, in
-            // each language, so every app on this TV shows up.
-            Set<String> covered = new HashSet<>();
-            for (List<Item> l : byLang) for (Item it : l) covered.add(it.pkg);
-            for (Service s : providers.values()) {
-                if (covered.contains(s.pkg)) continue;
-                Map<Integer, Service> only = Collections.singletonMap(s.tmdbId, s);
-                List<Future<List<Item>>> own = new ArrayList<>();
-                for (String[] l : LANGUAGES) own.add(langs.submit(() -> titles(token, l, only, 1, APP_WINDOWS, now, asks, details)));
-                for (int k = 0; k < n; k++) {
+            for (int k = 0; k < n; k++) {
+                List<Item> q = new ArrayList<>();
+                for (int i = 0; i < details.get(k).size(); i++) {
                     try {
-                        byLang.get(k).addAll(result(own.get(k), 150));
+                        Item it = item(found.get(k).get(i), result(details.get(k).get(i)), LANGUAGES[k][1], providers, since, today);
+                        if (it != null) q.add(it);
                     } catch (IOException ignored) {
-                        // this app stays without; the rest of the shelf is fine
+                        // one title that didn't answer
                     }
                 }
+                Collections.sort(q, NEWEST); // stable: on the same day, the best rated (then most popular) first
+                byLang.add(q);
             }
-            for (int k = 0; k < n; k++) byLang.set(k, spread(byLang.get(k)));
 
-            // Mixed by share: each place goes to the language furthest below its share so far (Telugu,
-            // English, Hindi, Telugu, English, Telugu: three, two and one in every six). When a language
-            // runs out, the others fill its places.
+            // Each language's newest, by share: each place goes to the language furthest below its share so
+            // far. When a language runs out, the others fill its places.
             List<Item> out = new ArrayList<>();
             Set<String> names = new HashSet<>();
             int[] taken = new int[n];
@@ -256,62 +265,14 @@ final class Shelf {
                 Item it = byLang.get(pick).get(taken[pick]++);
                 if (names.add(it.title)) out.add(it); // the same title found through two apps: once
             }
+            Collections.sort(out, NEWEST);
             return out;
         } finally {
-            asks.shutdownNow();
-            langs.shutdownNow();
+            pool.shutdownNow();
         }
     }
 
-    /**
-     * [lang]'s titles on the apps in [providers], best first: from the last [windows][0] days, then further
-     * back, window by window, until there are [need] of them.
-     */
-    private static List<Item> titles(String token, String[] lang, Map<Integer, Service> providers, int need, int[] windows,
-                                     long now, ExecutorService asks, Map<String, Future<JSONObject>> details) throws IOException {
-        java.text.SimpleDateFormat f = new java.text.SimpleDateFormat("yyyy-MM-dd", Locale.US);
-        f.setTimeZone(Weather.ZONE);
-        Calendar cal = Calendar.getInstance(Weather.ZONE);
-        cal.setTimeInMillis(now);
-        final String today = f.format(cal.getTime());
-        final String ids = TextUtils.join("|", providers.keySet());
-        List<Item> out = new ArrayList<>();
-        for (int days : windows) {
-            cal.setTimeInMillis(now);
-            cal.add(Calendar.DAY_OF_MONTH, -days);
-            String since = f.format(cal.getTime());
-            List<JSONObject> c = candidates(token, lang[0], ids, since, today);
-            int ask = Math.min(c.size(), MAX_ASKED / LANGUAGES.length);
-            List<Future<JSONObject>> d = new ArrayList<>();
-            for (int i = 0; i < ask; i++) {
-                JSONObject r = c.get(i);
-                d.add(details.computeIfAbsent(r.optString("_type") + "/" + r.optInt("id"),
-                        k -> asks.submit(() -> tmdb(token, "/" + k, DETAILS))));
-            }
-            out = new ArrayList<>();
-            for (int i = 0; i < ask; i++) {
-                try {
-                    Item it = item(c.get(i), result(d.get(i)), lang[1], providers, since);
-                    if (it != null) out.add(it);
-                } catch (IOException ignored) {
-                    // one title that didn't answer
-                }
-            }
-            if (out.size() >= need) break;
-        }
-        return out;
-    }
-
-    /** [items] with the apps taking turns (each app's best first, the app of the best title leading). */
-    private static List<Item> spread(List<Item> items) {
-        Map<String, List<Item>> byApp = new LinkedHashMap<>();
-        for (Item it : items) byApp.computeIfAbsent(it.pkg, k -> new ArrayList<>()).add(it);
-        List<Item> out = new ArrayList<>();
-        for (int round = 0; out.size() < items.size(); round++) {
-            for (List<Item> l : byApp.values()) if (round < l.size()) out.add(l.get(round));
-        }
-        return out;
-    }
+    private static final java.util.Comparator<Item> NEWEST = (x, y) -> y.released.compareTo(x.released);
 
     /** A title's details, where it streams, and its wide pictures (those with the title on them too). */
     private static final Map<String, String> DETAILS = new HashMap<>();
@@ -321,13 +282,16 @@ final class Shelf {
         DETAILS.put("include_image_language", "en,te,hi,null");
     }
 
-    private static <T> T result(Future<T> f) throws IOException {
-        return result(f, 40);
+    /** A movie's, with its release dates in India too (in cinemas, on streaming). */
+    private static final Map<String, String> MOVIE_DETAILS = new HashMap<>(DETAILS);
+
+    static {
+        MOVIE_DETAILS.put("append_to_response", "watch/providers,images,release_dates");
     }
 
-    private static <T> T result(Future<T> f, int seconds) throws IOException {
+    private static <T> T result(Future<T> f) throws IOException {
         try {
-            return f.get(seconds, TimeUnit.SECONDS);
+            return f.get(40, TimeUnit.SECONDS);
         } catch (java.util.concurrent.ExecutionException e) {
             throw e.getCause() instanceof IOException ? (IOException) e.getCause() : new IOException(e.getCause());
         } catch (InterruptedException | java.util.concurrent.TimeoutException e) {
@@ -335,10 +299,14 @@ final class Shelf {
         }
     }
 
-    /** The poster for [r] given its details [d], or null if it isn't new enough or isn't on this TV's apps. */
-    private static Item item(JSONObject r, JSONObject d, String lang, Map<Integer, Service> providers, String since) {
+    /**
+     * The poster for [r] given its details [d], or null if it didn't come out between [since] and [today]
+     * or isn't on this TV's apps.
+     */
+    private static Item item(JSONObject r, JSONObject d, String lang, Map<Integer, Service> providers, String since, String today) {
         boolean tv = r.optString("_type").equals("tv");
         int season = 0;
+        String released = null;
         if (tv) {
             // The series, or the season now airing, must have begun in the last two weeks.
             JSONObject last = d.optJSONObject("last_episode_to_air");
@@ -349,7 +317,27 @@ final class Shelf {
                 JSONObject sn = seasons.optJSONObject(k);
                 if (sn != null && sn.optInt("season_number") == season) began = sn.optString("air_date", null);
             }
-            if (began == null || began.isEmpty() || began.compareTo(since) < 0) return null;
+            if (began == null || began.isEmpty() || began.compareTo(since) < 0 || began.compareTo(today) > 0) return null;
+            released = began;
+        } else {
+            // Out in the window: its first release anywhere, or the first of its releases in India (in cinemas
+            // or on streaming) that falls in it.
+            String first = r.optString("release_date");
+            if (first.compareTo(since) >= 0 && first.compareTo(today) <= 0) released = first;
+            JSONObject rd = d.optJSONObject("release_dates");
+            JSONArray countries = rd == null ? null : rd.optJSONArray("results");
+            for (int k = 0; countries != null && k < countries.length(); k++) {
+                JSONObject c = countries.optJSONObject(k);
+                if (c == null || !"IN".equals(c.optString("iso_3166_1"))) continue;
+                JSONArray dates = c.optJSONArray("release_dates");
+                for (int j = 0; dates != null && j < dates.length(); j++) {
+                    String day = dates.optJSONObject(j).optString("release_date");
+                    if (day.length() < 10) continue;
+                    day = day.substring(0, 10);
+                    if (day.compareTo(since) >= 0 && day.compareTo(today) <= 0 && (released == null || day.compareTo(released) < 0)) released = day;
+                }
+            }
+            if (released == null) return null;
         }
         JSONObject wp = d.optJSONObject("watch/providers");
         JSONObject res = wp == null ? null : wp.optJSONObject("results");
@@ -364,6 +352,12 @@ final class Shelf {
         if (app == null) return null;
         String rating = rated(r) ? String.format(Locale.US, "★ %.1f", r.optDouble("vote_average", 0)) : "New";
         String kind = !tv ? "Movie" : "Season " + Math.max(1, season);
+        String day = released;
+        try {
+            java.text.SimpleDateFormat ymd = new java.text.SimpleDateFormat("yyyy-MM-dd", Locale.US);
+            day = new java.text.SimpleDateFormat("d MMM", Locale.UK).format(ymd.parse(released));
+        } catch (java.text.ParseException ignored) {
+        }
         // The card: the best rated wide picture with the title lettered on it, else the plain backdrop.
         String card = null;
         JSONObject images = d.optJSONObject("images");
@@ -372,23 +366,15 @@ final class Shelf {
             JSONObject w = wide.optJSONObject(k);
             if (w != null && !w.isNull("iso_639_1") && w.optString("file_path").startsWith("/")) card = w.optString("file_path");
         }
-        return new Item(r.optString(tv ? "name" : "title"), rating + " · " + lang + " · " + app.name + " · " + kind,
+        return new Item(r.optString(tv ? "name" : "title"), rating + " · " + lang + " · " + app.name + " · " + kind + " · " + day,
                 d.optString("overview", r.optString("overview")).trim(),
                 "https://image.tmdb.org/t/p/w780" + (card != null ? card : r.optString("backdrop_path")), card != null,
-                "https://image.tmdb.org/t/p/w1280" + r.optString("backdrop_path"), app.pkg, lang);
+                "https://image.tmdb.org/t/p/w1280" + r.optString("backdrop_path"), app.pkg, lang, released);
     }
 
     /** One title, whichever fetch it came from. */
     static String key(Item it) {
         return it.title + "|" + it.pkg;
-    }
-
-    /** Whether [pool] holds a title none of the [shown] pages has had. */
-    static boolean hasUnseen(List<Item> pool, List<List<Item>> shown) {
-        Set<String> seen = new HashSet<>();
-        for (List<Item> page : shown) for (Item it : page) seen.add(key(it));
-        for (Item it : pool) if (!seen.contains(key(it))) return true;
-        return false;
     }
 
     /**
@@ -410,65 +396,51 @@ final class Shelf {
     }
 
     /**
-     * The next page of six from [pool], each place in its language ([places]). For each: the best title not
-     * shown before on an app not yet on the page; else one not shown before; else an earlier one in that
-     * language (not one on [current]) to keep the shares; else, the language quite run out, any title not
-     * shown before. At most three from one app.
+     * [pool] (newest first) dealt into at most [PAGES] pages of six, page 1 the newest: each place takes the
+     * newest title left in its language ([places]), else, that language run out, the newest left of any;
+     * at most three from one app in a page, shown newest first. A last page of fewer than three is left out.
      */
-    static List<Item> deal(List<Item> pool, List<List<Item>> shown, List<Item> current) {
-        Set<String> seen = new HashSet<>(), showing = new HashSet<>(), taken = new HashSet<>();
-        for (List<Item> page : shown) for (Item it : page) seen.add(key(it));
-        if (current != null) for (Item it : current) showing.add(key(it));
-        Map<String, Integer> perApp = new HashMap<>();
-        List<Item> out = new ArrayList<>();
-        for (String lang : places()) {
-            Item pick = null;
-            for (int pass = 0; pass < 4 && pick == null; pass++) {
-                for (Item it : pool) {
-                    String k = key(it);
-                    int same = perApp.getOrDefault(it.pkg, 0);
-                    if (taken.contains(k) || same >= 3) continue;
-                    boolean fits = pass == 3 || it.lang.equals(lang);
-                    boolean fresh = !seen.contains(k);
-                    if (fits && (pass == 0 ? fresh && same == 0 : pass == 2 ? !showing.contains(k) : fresh)) {
-                        pick = it;
-                        break;
+    static List<List<Item>> pages(List<Item> pool) {
+        List<Item> left = new ArrayList<>(pool);
+        List<List<Item>> out = new ArrayList<>();
+        while (out.size() < PAGES && !left.isEmpty()) {
+            List<Item> page = new ArrayList<>();
+            Map<String, Integer> perApp = new HashMap<>();
+            for (String lang : places()) {
+                Item pick = null;
+                for (int pass = 0; pass < 2 && pick == null; pass++) {
+                    for (Item it : left) {
+                        if (perApp.getOrDefault(it.pkg, 0) < 3 && (pass == 1 || it.lang.equals(lang))) {
+                            pick = it;
+                            break;
+                        }
                     }
                 }
+                if (pick == null) break;
+                left.remove(pick);
+                perApp.put(pick.pkg, perApp.getOrDefault(pick.pkg, 0) + 1);
+                page.add(pick);
             }
-            if (pick == null) continue;
-            perApp.put(pick.pkg, perApp.getOrDefault(pick.pkg, 0) + 1);
-            taken.add(key(pick));
-            out.add(pick);
+            if (page.isEmpty()) break;
+            Collections.sort(page, NEWEST); // left to right, newest first
+            out.add(page);
         }
+        if (out.size() > 1 && out.get(out.size() - 1).size() < 3) out.remove(out.size() - 1);
         return out;
     }
 
     // ---- Where it all comes from and where it's kept (blocking: run off the main thread)
 
-    /** The pages of titles shown, oldest first, and the one showing. */
-    static final class History {
-        final List<List<Item>> pages;
-        final int at;
-
-        History(List<List<Item>> pages, int at) {
-            this.pages = pages;
-            this.at = at;
-        }
-    }
-
     static final class Source {
-        private static final String PAGES = "PAGES1";
-        private final File file, pagesFile, pictures;
+        private final File file, pictures;
         private final String token;
 
         Source(File cacheDir, String tmdbToken) {
             token = tmdbToken == null ? "" : tmdbToken.trim();
             file = new File(cacheDir, "home-shelf.json");
-            pagesFile = new File(cacheDir, "home-shelf-pages.json");
             pictures = new File(cacheDir, "home-img");
-            // Day files from earlier shelves (TVmaze in v6.0, JustWatch in v7).
-            for (String name : new String[]{"home-tvmaze", "home-new"}) {
+            // Day files from earlier shelves (TVmaze in v6.0, JustWatch in v7), and pages kept by an earlier one.
+            for (String name : new String[]{"home-tvmaze", "home-new", "home-shelf-pages.json"}) {
                 File old = new File(cacheDir, name);
                 File[] files = old.listFiles();
                 if (files != null) for (File d : files) d.delete();
@@ -488,41 +460,14 @@ final class Shelf {
             }
         }
 
-        /** The pages shown before, or null when there are none (or they're from an older shelf). */
-        History history() {
-            try {
-                if (!pagesFile.isFile()) return null;
-                JSONObject root = new JSONObject(Net.readText(pagesFile));
-                if (!PAGES.equals(root.optString("source"))) return null;
-                JSONArray a = root.getJSONArray("pages");
-                List<List<Item>> pages = new ArrayList<>();
-                for (int i = 0; i < a.length(); i++) {
-                    List<Item> page = fromJson(a.getJSONArray(i));
-                    if (!page.isEmpty()) pages.add(page);
-                }
-                return pages.isEmpty() ? null : new History(pages, Math.min(root.optInt("at"), pages.size() - 1));
-            } catch (IOException | JSONException e) {
-                return null;
-            }
-        }
-
-        void saveHistory(List<List<Item>> pages, int at) {
-            try {
-                JSONArray a = new JSONArray();
-                for (List<Item> page : pages) a.put(toJson(page));
-                Net.writeAtomically(pagesFile, new JSONObject().put("source", PAGES).put("at", at).put("pages", a).toString());
-            } catch (IOException | JSONException ignored) {
-                // Only the way back is lost; the shelf itself is fine.
-            }
-        }
-
         private static List<Item> fromJson(JSONArray a) throws JSONException {
             List<Item> out = new ArrayList<>();
             for (int i = 0; i < a.length(); i++) {
                 JSONObject o = a.getJSONObject(i);
                 String meta = o.getString("meta"), parts[] = meta.split(" · ");
                 out.add(new Item(o.getString("title"), meta, o.optString("overview"), o.getString("image"), o.optBoolean("titled"),
-                        o.getString("backdrop"), o.getString("package"), o.optString("lang", parts.length > 1 ? parts[1] : "")));
+                        o.getString("backdrop"), o.getString("package"), o.optString("lang", parts.length > 1 ? parts[1] : ""),
+                        o.optString("released")));
             }
             return out;
         }
@@ -531,7 +476,7 @@ final class Shelf {
             JSONArray a = new JSONArray();
             for (Item it : items) {
                 a.put(new JSONObject().put("title", it.title).put("meta", it.meta).put("image", it.image)
-                        .put("overview", it.overview).put("titled", it.titled).put("backdrop", it.backdrop).put("package", it.pkg).put("lang", it.lang));
+                        .put("overview", it.overview).put("titled", it.titled).put("backdrop", it.backdrop).put("package", it.pkg).put("lang", it.lang).put("released", it.released));
             }
             return a;
         }
@@ -541,7 +486,7 @@ final class Shelf {
         }
 
         private static String sourceName() {
-            return "TMDB_CARDS2"; // 2: languages reach back further, every app has titles
+            return "TMDB_CARDS3"; // 3: newest first, with the day each came out
         }
 
         long age(long now) {

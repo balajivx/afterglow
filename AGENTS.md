@@ -25,7 +25,7 @@ it. Without it the shelf stays empty and everything else works.
 | `Backdrop.java` | The scene: aurora ribbons, stars, hero backdrop, glow; `SceneView` (half resolution); `Glass` (frosted, quarter resolution, RenderEffect on Android 12+) |
 | `BentoView.java` | Clock card: dial, greeting/time, sky tile, sentence line |
 | `Weather.java` | Open-Meteo forecast, WMO codes to words and Phosphor glyphs, cache |
-| `Shelf.java` | "New and top rated on your apps": TMDB queries (`LANGUAGES`, `SERVICES`, no animation/kids; two weeks, reaching back through `WINDOWS` to 90 days for a language short of its share, and `APP_WINDOWS` to a year for an app with no titles) building a pool of up to `POOL` titles with the apps taking turns (`spread()`), dealt into pages of 6 by `deal()` (every page 3 Telugu, 2 English, 1 Hindi by `places()`; titles not shown before first; pages kept in `home-shelf-pages.json`); wide title cards (`PosterView`, 16:9, TMDB backdrops with the title lettered on when there is one); `SpotlightView` (the focused title's name, details and story); `ShelfButton` (+/− ‹ › ↻ in the head); shelf layout |
+| `Shelf.java` | "New and top rated on your apps": TMDB queries (`LANGUAGES`, `SERVICES`, strictly the last two weeks, no animation/kids) building a pool of up to `POOL` titles, newest first (`NEWEST`, by each title's `released` day), dealt into at most `PAGES` (4) pages of 6 by `pages()` (page 1 the newest; 3 Telugu, 2 English, 1 Hindi by `places()` while a language lasts, the newest of any filling in); wide title cards (`PosterView`, 16:9, TMDB backdrops with the title lettered on when there is one); `SpotlightView` (the focused title's name, details and story); `ShelfButton` (+/− ‹ › ↻ in the head); shelf layout |
 | `Sports.java` | Flip card: Arsenal and India (TheSportsDB, key `123`), F1 (Jolpica); faces `MatchTile`, `RaceTile`; `CardView` flips on Left/Right |
 | `DockView.java` | App grid (rows of `columns`), drawn covers (`BRANDS` colours), focus routing inside the grid |
 | `ArtView.java` | Base for focusable pictures: fine ring, colour change, nothing grows |
@@ -42,9 +42,10 @@ Resources: `res/values/config.xml` (dock order, hidden apps, weather place, colu
   sends `com.android.tv.action.VIEW_INPUTS`, which opens Sony's Inputs panel). Up from the card reaches them.
 - The shelf starts folded: just its head and a + button, on the line over the dock (no posters, story or
   backdrop). + opens it, − folds it again (`MainActivity.foldShelf`, `ShelfView.setCollapsed`).
-- ↻ refetches and deals a new page of titles not shown before onto the end; ‹ › page back and forth
-  through the last 4 pages (`MainActivity.loadShelf(true)`, `dealSet`, `turnTo`). Up from a poster reaches
-  those buttons, Up again the sports card.
+- Only titles out in the last two weeks, never older. Pages run newest first (page 1 the most recent);
+  ‹ › page through them. ↻ refetches and goes to page 1 if TMDB has something new, else to the next page
+  (`MainActivity.loadShelf(true)`, `usePool`, `showSet`). Up from a poster reaches those buttons, Up again
+  the sports card.
 - Focus is a colour change plus a 1 dp ring. Nothing grows, lifts or slides (the sports card's flip and
   the page lift for lower dock rows are the only motions, both on purpose).
 - The screen is 960 x 540 dp. Positions are in `activity_main.xml`.

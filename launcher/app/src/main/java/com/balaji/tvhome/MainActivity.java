@@ -76,7 +76,7 @@ public class MainActivity extends Activity {
     private Weather forecast;
     private Weather.Reading reading;
     private List<Shelf.Item> shelfItems, shelfPool;
-    /** The pages of titles dealt so far, oldest first; [shelfSet] is the one showing. */
+    /** The titles' pages, page 1 the newest ([Shelf.pages]); [shelfSet] is the one showing. */
     private final List<List<Shelf.Item>> shelfSets = new ArrayList<>();
     private int shelfSet, shelfTicket;
     /** Inputs or Settings, whichever had focus last (Up from the sports card goes there). */
@@ -170,8 +170,8 @@ public class MainActivity extends Activity {
         sports.setId(View.generateViewId());
         for (View q : new View[]{inputs, settings}) q.setNextFocusDownId(sports.getId());
         shelf.toggle.onPress = () -> foldShelf(!shelf.collapsed());
-        shelf.prev.onPress = () -> turnTo(shelfSet - 1);
-        shelf.next.onPress = () -> turnTo(shelfSet + 1);
+        shelf.prev.onPress = () -> showSet(shelfSet - 1);
+        shelf.next.onPress = () -> showSet(shelfSet + 1);
         shelf.refresh.onPress = () -> loadShelf(true);
         sports.onFace = color -> sceneView.glow(color);
         dock.onFocus = t -> movePage(dock.rowOf(t));
@@ -596,9 +596,6 @@ public class MainActivity extends Activity {
 
     // ------------------------------------------------------------------ shelf
 
-    /** How many pages of six the shelf keeps to go back through. */
-    private static final int HISTORY = 4;
-
     private final Runnable retryShelf = this::loadShelf;
 
     /** Shows [items] with their [pictures]; null items shows the calm empty state . */
@@ -661,10 +658,9 @@ public class MainActivity extends Activity {
     }
 
     /**
-     * The titles: the pages from last time and the pool from disk at once, then the pool from TMDB when it's
-     * four hours old ([fresh]: now, for the refresh button, which then deals a new page of titles not shown
-     * before; the earlier pages stay behind ‹). A pool with titles not shown before also deals a new page
-     * by itself, while focus is away from the shelf.
+     * The titles: from disk at once, then from TMDB when they're four hours old ([fresh]: now, for the
+     * refresh button, which then goes to page 1 if TMDB has something new, else to the next page, so ‹
+     * leads back to the ones seen).
      */
     private void loadShelf(boolean fresh) {
         if (shelfBusy || apps.isEmpty() || !shelfSource.hasToken()) return;
@@ -681,33 +677,41 @@ public class MainActivity extends Activity {
             try {
                 if (pool == null) {
                     pool = shelfSource.cached();
-                    Shelf.History h = shelfSource.history();
-                    List<Shelf.Item> cached = pool;
-                    if (cached != null || h != null) handler.post(() -> startShelf(cached, h));
+                    if (pool != null) {
+                        List<Shelf.Item> cached = pool;
+                        handler.post(() -> usePool(cached, -1, null));
+                    }
                 }
                 boolean stale = shelfSource.age(now) >= SHELF_EVERY_MS;
                 if (!fresh && (quiet || !online || (!stale && pool != null))) return;
                 List<Shelf.Item> got = shelfSource.fetch(now, installed);
                 handler.post(() -> {
-                    boolean news = Shelf.hasUnseen(got, shelfSets);
-                    shelfPool = got;
+                    int to = -1;
+                    String note = null;
                     if (fresh) {
-                        dealSet();
-                        shelf.note(news ? "New titles" : "Seen them all · from the top");
-                    } else if (shelfSets.isEmpty() || (news && !shelf.hasFocus())) {
-                        dealSet();
+                        Set<String> had = new HashSet<>();
+                        if (shelfPool != null) for (Shelf.Item it : shelfPool) had.add(Shelf.key(it));
+                        boolean news = false;
+                        for (Shelf.Item it : got) news |= !had.contains(Shelf.key(it));
+                        int pages = Shelf.pages(got).size();
+                        if (news) {
+                            to = 0;
+                            note = "New titles";
+                        } else if (shelfSet + 1 < pages) {
+                            to = shelfSet + 1;
+                        } else {
+                            to = 0;
+                            note = "Back to the newest";
+                        }
                     }
-                    // Pictures for the pool and for every page kept, so paging either way is instant.
-                    List<Shelf.Item> keep = new ArrayList<>();
-                    for (List<Shelf.Item> page : shelfSets) keep.addAll(page);
-                    shelfIo.execute(() -> prefetchPictures(got, keep, sizes));
+                    usePool(got, to, note);
                 });
+                prefetchPictures(got, sizes);
             } catch (IOException e) {
                 // Offline, the service hiccuped, or too few shows this week: keep the shelf that's up.
                 handler.post(() -> {
                     if (fresh) {
-                        // Still a new page from the titles already here, while some haven't been shown.
-                        if (shelfPool != null && Shelf.hasUnseen(shelfPool, shelfSets)) dealSet();
+                        if (shelfSets.size() > 1) showSet((shelfSet + 1) % shelfSets.size());
                         shelf.note(online ? "Couldn't reach TMDB" : "Offline");
                     }
                     shelfQuietUntil = System.currentTimeMillis() + (shelfItems == null ? RETRY_MS : 30 * 60 * 1000L);
@@ -722,40 +726,14 @@ public class MainActivity extends Activity {
         });
     }
 
-    /** From disk at start: back to the page the viewer was on, or a first page dealt from [pool]. */
-    private void startShelf(List<Shelf.Item> pool, Shelf.History h) {
-        if (pool != null) shelfPool = pool;
-        if (!shelfSets.isEmpty()) return;
-        if (h != null) {
-            // The newest [HISTORY] only (pages saved when more were kept are let go).
-            int drop = Math.max(0, h.pages.size() - HISTORY);
-            shelfSets.addAll(h.pages.subList(drop, h.pages.size()));
-            showSet(Math.max(0, h.at - drop));
-        } else {
-            dealSet();
-        }
-    }
-
-    /**
-     * Deals a page of six from the pool ([Shelf.deal]: titles not shown before first) onto the end of the
-     * pages and shows it; the oldest page goes once there are [HISTORY].
-     */
-    private void dealSet() {
-        if (shelfPool == null) return;
-        List<Shelf.Item> page = Shelf.deal(shelfPool, shelfSets, shelfItems);
-        if (page.isEmpty()) return;
-        shelfSets.add(page);
-        while (shelfSets.size() > HISTORY) shelfSets.remove(0);
-        turnTo(shelfSets.size() - 1);
-    }
-
-    /** Shows page [index] and keeps the pages and the place on disk, for after the TV restarts the launcher. */
-    private void turnTo(int index) {
-        if (index < 0 || index >= shelfSets.size()) return;
-        showSet(index);
-        final List<List<Shelf.Item>> pages = new ArrayList<>(shelfSets);
-        final int at = shelfSet;
-        shelfIo.execute(() -> shelfSource.saveHistory(pages, at));
+    /** Takes [pool] as the shelf's titles, dealt into pages, and shows page [to] (-1: stay on the current page). */
+    private void usePool(List<Shelf.Item> pool, int to, String note) {
+        shelfPool = pool;
+        shelfSets.clear();
+        shelfSets.addAll(Shelf.pages(pool));
+        if (shelfSets.isEmpty()) return;
+        showSet(Math.min(to >= 0 ? to : shelfSet, shelfSets.size() - 1));
+        if (note != null) shelf.note(note);
     }
 
     /** Shows page [index] of the titles, its pictures from disk (or the network while they're still coming). */
@@ -797,18 +775,13 @@ public class MainActivity extends Activity {
         });
     }
 
-    /**
-     * Puts every title's pictures in [pool] on disk, so paging through is instant, and lets go of any that
-     * neither the pool nor the pages kept ([keep]) still show.
-     */
-    private void prefetchPictures(List<Shelf.Item> pool, List<Shelf.Item> keep, int[][] sizes) {
+    /** Puts every title's pictures on disk, so paging through is instant, and lets go of old ones. */
+    private void prefetchPictures(List<Shelf.Item> pool, int[][] sizes) {
         Set<String> keys = new HashSet<>();
         int hw = Math.round(Ui.dp(this, 336)), hh = Math.round(Ui.dp(this, 200));
-        for (List<Shelf.Item> l : Arrays.asList(pool, keep)) {
-            for (Shelf.Item it : l) {
-                keys.add(Net.keyFor(it.image, sizes[0][0], sizes[0][1]));
-                keys.add(Net.keyFor(it.backdrop, hw, hh));
-            }
+        for (Shelf.Item it : pool) {
+            keys.add(Net.keyFor(it.image, sizes[0][0], sizes[0][1]));
+            keys.add(Net.keyFor(it.backdrop, hw, hh));
         }
         for (Shelf.Item it : pool) {
             shelfSource.fetchPicture(it.image, sizes[0][0], sizes[0][1]);

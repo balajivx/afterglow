@@ -71,8 +71,10 @@ Custom) uses them. Max looked smoother on pans but made a hit ball break up and 
   undo`). The TV has 3 GB of memory; with Netflix, Prime, JioHotstar and Cricfy idling, SonyLIV lost 8 frames
   in 95 s of play, and none in 2 minutes once they were restricted. The apps still open and play as before.
 - **Key 1**, which puts Motionflow on Custom with your Smoothness 2 (above).
-- **JioHotstar** sent live cricket at 25 fps (1080p) and paces its frames unevenly: pick its highest quality
-  option, and expect SonyLIV at 1080p (50 fps) to look smoother.
+- **JioHotstar** sends live cricket at 25 fps (1080p), even on its highest quality, and its player aims each
+  frame about 4 ms off the TV's refresh, so about once a second a frame stays up 67 ms instead of 33-50 ms.
+  The TV shows every frame exactly when asked; neither more memory nor Smoothness Max changed it. It's the
+  app: where a match is on SonyLIV too, SonyLIV at 1080p (50 fps, evenly paced) looks clearly smoother.
 
 Why it can stutter at all: the TV's apps always draw at 60 Hz, while cricket
 streams are 50 or 25 frames a second, so frames can't be shown for equal times (50 fps: every 5th frame is

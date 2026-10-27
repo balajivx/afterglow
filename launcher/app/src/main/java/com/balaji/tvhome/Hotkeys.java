@@ -58,9 +58,24 @@ public class Hotkeys extends AccessibilityService {
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final ExecutorService io = Executors.newSingleThreadExecutor();
     private Card card;
+    /** The service while it runs: the Control Center's picture buttons go through it. */
+    static Hotkeys running;
 
     @Override
     public void onAccessibilityEvent(AccessibilityEvent event) {
+    }
+
+    @Override
+    protected void onServiceConnected() {
+        running = this;
+    }
+
+    /** Applies picture profile [n] as its number key would; false when there's no such profile. */
+    boolean pictureKey(int n) {
+        String[] p = profile(n);
+        if (p == null) return false;
+        apply(n, p);
+        return true;
     }
 
     @Override
@@ -70,6 +85,7 @@ public class Hotkeys extends AccessibilityService {
     @Override
     public void onDestroy() {
         super.onDestroy();
+        if (running == this) running = null;
         handler.removeCallbacksAndMessages(null); // nothing queued may run after this
         io.shutdownNow();
         if (card != null) card.remove();
@@ -98,6 +114,15 @@ public class Hotkeys extends AccessibilityService {
 
     private void apply(int n, String[] profile) {
         String name = profile[0];
+        if (java.util.Arrays.asList(profile).contains("action=pictureOff")) {
+            // The TV's own Picture off: dark screen, sound on; any key but ours brings the picture back.
+            show(n + "  " + name, "Screen off, sound on · any key turns it back on");
+            run(() -> {
+                pause(1500); // the card is read first
+                press(PICTURE_OFF);
+            });
+            return;
+        }
         show(n + "  " + name, "Changing the picture…");
         List<String> settings = new ArrayList<>(Arrays.asList(profile).subList(1, profile.length));
         Motion motion = Motion.from(settings); // takes its settings out of the list
@@ -144,6 +169,7 @@ public class Hotkeys extends AccessibilityService {
     }
 
     // Sony remote buttons, as IP control's IRCC codes (from the TV's getRemoteControllerInfo).
+    static final String PICTURE_OFF = "AAAAAQAAAAEAAAA+Aw==";
     private static final String DOWN = "AAAAAQAAAAEAAAB1Aw==",
             LEFT = "AAAAAQAAAAEAAAA0Aw==", RIGHT = "AAAAAQAAAAEAAAAzAw==", CONFIRM = "AAAAAQAAAAEAAABlAw==",
             GEAR = "AAAAAgAAAMQAAABLAw=="; // ActionMenu: Quick Settings
@@ -325,7 +351,7 @@ public class Hotkeys extends AccessibilityService {
     }
 
     /** One remote button press through IP control, then a moment for the menu to follow. */
-    private static void press(String code) {
+    static void press(String code) {
         try {
             String body = "<?xml version=\"1.0\"?><s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\" "
                     + "s:encodingStyle=\"http://schemas.xmlsoap.org/soap/encoding/\"><s:Body>"
@@ -448,7 +474,7 @@ public class Hotkeys extends AccessibilityService {
     }
 
     /** [method] of Sony's [service] (video, avContent...) with [params]; its answer. */
-    private static JSONObject call(String service, String method, JSONArray params) throws IOException, JSONException {
+    static JSONObject call(String service, String method, JSONArray params) throws IOException, JSONException {
         byte[] body = new JSONObject().put("method", method).put("id", 1).put("version", "1.0")
                 .put("params", params).toString().getBytes(StandardCharsets.UTF_8);
         HttpURLConnection c = (HttpURLConnection) new URL(API + service).openConnection();

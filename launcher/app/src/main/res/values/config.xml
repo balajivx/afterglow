@@ -57,7 +57,21 @@
          Smoothness and Clearness stay as set by hand (Sports: Smoothness 2, Clearness Min; Max made the
          ball break up as Motionflow guessed at it).
          Game mode keeps lag low by switching off Sony's motion processing, so Gaming sets no motionflow.
-         Add hotkey_6 to hotkey_9 the same way; 0 shows what each key does. -->
+         action=pictureOff turns the screen off, sound playing on (any other key brings it back).
+         Add hotkey_7 to hotkey_9 the same way; 0 shows what each key does. -->
+    <!-- Control Center's input button: the box on this HDMI port (here the Fire TV Stick) -->
+    <string name="quick_input">Fire TV</string>
+    <integer name="quick_input_port">4</integer>
+
+    <!-- Control Center's Close all leaves these alone: the screensaver, Sony's TV app (HDMI and the
+         tuner; it restarts itself on an input switch), the Play Store (app updates). Afterglow is always
+         kept; background system services aren't apps with a TV launcher entry, so Close all never sees them. -->
+    <string-array name="close_all_keep">
+        <item>com.neilturner.aerialviews</item>
+        <item>com.sony.dtv.tvx</item>
+        <item>com.android.vending</item>
+    </string-array>
+
     <string-array name="hotkey_1">
         <item>Sports</item>
         <item>pictureMode=custom</item>
@@ -113,5 +127,9 @@
         <item>autoLocalDimming=medium</item>
         <item>lightSensor=off</item>
         <item>motionflow=auto</item>
+    </string-array>
+    <string-array name="hotkey_6">
+        <item>Picture off</item>
+        <item>action=pictureOff</item>
     </string-array>
 </resources>

@@ -39,11 +39,29 @@ afterglow) shines in the colour of whatever you're on. Moving around is calm: a 
 or grows.
 
 
+
+## Control Center
+
+The button over the sports card (sliders icon) opens it; Back closes it. Left: **StandBy** (the screensaver
+now), **Wi-Fi** and **Bluetooth** (their state; OK opens their settings), **Inputs**, **Settings**, and round
+buttons: **Voice** (Google Assistant), **Sound** (Sony's Display & Sound, where the Streambar's settings are),
+**Sleep** (each press: 30, 60, 90 min, off; the TV goes to standby when it runs out), **Picture off** (dark
+screen, sound on; any key brings it back), **Cast** (with the TV's cast name), **Fire TV** (straight to HDMI 4,
+set in `config.xml`), **Screensaver** settings, and **Restart** (press twice). Right: the five picture modes,
+volume (it drives the Streambar), and **Recent apps** with the memory each one holds now: OK opens one, its
+**×** closes it at once, and **Close all** closes every running app except those on `close_all_keep` in
+`config.xml` (the screensaver, Sony's TV app, the Play Store). The **6** key is Picture off from anywhere.
+
+Closing apps and reading their memory use the TV's own debugging service (the same one the Mac's adb uses):
+Android lets no app do either otherwise. The TV asked once to allow it ("Always allow" was ticked). If closing
+ever says it needs network debugging, turn it back on in Developer options; after a factory reset the TV
+asks again.
+
 ## Picture keys (the remote's number keys)
 
 In any app, the number keys switch the picture: **1** Sports (cricket, football, F1), **2** Movies (and
-Netflix or Prime series), **3** Gaming, **4** Night, **5** Everyday (YouTube, TV), and **0** shows what
-each key does. A small card at the top says what changed. The profiles are in
+Netflix or Prime series), **3** Gaming, **4** Night, **5** Everyday (YouTube, TV), **6** Picture off (sound
+on), and **0** shows what each key does. A small card at the top says what changed. The profiles are in
 `launcher/app/src/main/res/values/config.xml` (`hotkey_1`…), so you can change them or add 5 to 9.
 
 They use Sony's IP control on the TV itself, which needs a key, once:

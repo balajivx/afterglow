@@ -7,6 +7,12 @@
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <!-- Turns the picture keys back on if Android ever turned them off; only adb can grant it (install.sh) -->
     <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS" />
+    <!-- Control Center: recent apps (usage stats: allowed by install.sh), whether Bluetooth is on, the
+         sleep timer's alarm -->
+    <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS" />
+    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
 
     <uses-feature android:name="android.software.leanback" android:required="false" />
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
@@ -47,6 +53,11 @@
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
         </activity>
+
+        <!-- Control Center's sleep timer: puts the TV in standby when it runs out -->
+        <receiver
+            android:name=".ControlCenter$Sleeper"
+            android:exported="false" />
 
         <!-- Picture hotkeys on the number keys, in any app. Turned on by ./hotkeys.sh (or Settings >
              Accessibility > Afterglow picture keys). -->

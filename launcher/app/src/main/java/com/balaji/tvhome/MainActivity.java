@@ -81,6 +81,8 @@ public class MainActivity extends Activity {
     private int shelfSet, shelfTicket;
     /** Inputs or Settings, whichever had focus last (Up from the sports card goes there). */
     private View lastQuick;
+    private Shelf.ShelfButton controlButton;
+    private ControlCenter controlCenter;
     private boolean weatherBusy, shelfBusy, resumed;
     private long shelfQuietUntil;
 
@@ -115,33 +117,21 @@ public class MainActivity extends Activity {
         sportsSlot.addView(sports, sl);
         sportsSource = new Sports.Source(getCacheDir());
 
-        // Inputs and Settings over the sports card: Up from the card reaches them, Down goes back.
+        // Over the sports card: the Control Center's button (Inputs and Settings live in it). Up from the
+        // card reaches it, Down goes back.
         FrameLayout quickSlot = findViewById(R.id.quickSlot);
-        Shelf.ShelfButton inputs = new Shelf.ShelfButton(this, R.drawable.ph_arrow_square_in_bold, "Inputs");
-        Shelf.ShelfButton settings = new Shelf.ShelfButton(this, R.drawable.ph_gear_six_bold, "Settings");
-        int quick = Math.round(Shelf.ShelfButton.diameter(this) + 2 * inputs.ringSpace);
-        FrameLayout.LayoutParams ip = new FrameLayout.LayoutParams(quick, quick), gp = new FrameLayout.LayoutParams(quick, quick);
+        controlButton = new Shelf.ShelfButton(this, R.drawable.ph_sliders_horizontal_bold, "Control Center");
+        int quick = Math.round(Shelf.ShelfButton.diameter(this) + 2 * controlButton.ringSpace);
+        FrameLayout.LayoutParams gp = new FrameLayout.LayoutParams(quick, quick);
         gp.leftMargin = Ui.dpi(this, 30f);
-        quickSlot.addView(inputs, ip);
-        quickSlot.addView(settings, gp);
-        inputs.onPress = () -> openFirst(new Intent("com.android.tv.action.VIEW_INPUTS"),
-                new Intent("com.sony.dtv.tvsettings.intent.action.MANAGE_INPUTS"));
-        settings.onPress = () -> openFirst(new Intent(android.provider.Settings.ACTION_SETTINGS));
-        inputs.setId(View.generateViewId());
-        settings.setId(View.generateViewId());
-        inputs.setNextFocusRightId(settings.getId());
-        settings.setNextFocusLeftId(inputs.getId());
+        quickSlot.addView(controlButton, gp);
+        controlButton.onPress = this::openControlCenter;
+        controlButton.setId(View.generateViewId());
         // Nowhere further left, right or up: stay put.
-        inputs.setNextFocusLeftId(inputs.getId());
-        settings.setNextFocusRightId(settings.getId());
-        inputs.setNextFocusUpId(inputs.getId());
-        settings.setNextFocusUpId(settings.getId());
-        lastQuick = settings;
-        View.OnFocusChangeListener rememberQuick = (v, has) -> {
-            if (has) lastQuick = v;
-        };
-        inputs.setOnFocusChangeListener(rememberQuick);
-        settings.setOnFocusChangeListener(rememberQuick);
+        controlButton.setNextFocusLeftId(controlButton.getId());
+        controlButton.setNextFocusRightId(controlButton.getId());
+        controlButton.setNextFocusUpId(controlButton.getId());
+        lastQuick = controlButton;
 
         spotlight = new Shelf.SpotlightView(this);
         spotlightSlot = findViewById(R.id.spotlightSlot);
@@ -161,6 +151,12 @@ public class MainActivity extends Activity {
         dock = new DockView(this, getResources().getInteger(R.integer.columns));
         dockSlot.addView(dock, match());
         content = findViewById(R.id.content);
+        controlCenter = new ControlCenter(this, sceneView);
+        ((FrameLayout) findViewById(R.id.root)).addView(controlCenter, match());
+        controlCenter.onClose = () -> {
+            ((ViewGroup) content).setDescendantFocusability(ViewGroup.FOCUS_AFTER_DESCENDANTS);
+            controlButton.requestFocus();
+        };
 
         dock.above = shelf::entry;
         shelf.below = dock::lastFocused;
@@ -168,7 +164,7 @@ public class MainActivity extends Activity {
         sports.below = shelf::entry;
         sports.above = () -> lastQuick;
         sports.setId(View.generateViewId());
-        for (View q : new View[]{inputs, settings}) q.setNextFocusDownId(sports.getId());
+        controlButton.setNextFocusDownId(sports.getId());
         shelf.toggle.onPress = () -> foldShelf(!shelf.collapsed());
         shelf.prev.onPress = () -> showSet(shelfSet - 1);
         shelf.next.onPress = () -> showSet(shelfSet + 1);
@@ -262,6 +258,7 @@ public class MainActivity extends Activity {
     protected void onPause() {
         super.onPause();
         resumed = false;
+        controlCenter.close(); // back on Home, the page as it was
         sceneView.setRunning(false);
         handler.removeCallbacks(ticker);
         handler.removeCallbacks(refresher);
@@ -302,18 +299,43 @@ public class MainActivity extends Activity {
 
     @Override
     public void onBackPressed() {
+        if (controlCenter.isOpen()) {
+            controlCenter.close();
+            return;
+        }
         // Back twice within 1.5 s on Home starts the screensaver (as before the restyle)
         long now = SystemClock.uptimeMillis();
         if (now - lastBack < 1500) {
             lastBack = 0;
-            try {
-                startActivity(new Intent().setClassName("com.android.systemui", "com.android.systemui.Somnambulator")
-                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
-            } catch (Exception ignored) {
-            }
+            startScreensaver();
         } else {
             lastBack = now;
         }
+    }
+
+    /** The Control Center over the page; the page takes no focus while it's open. */
+    private void openControlCenter() {
+        controlCenter.open();
+        ((ViewGroup) content).setDescendantFocusability(ViewGroup.FOCUS_BLOCK_DESCENDANTS);
+    }
+
+    /** The screensaver now (Control Center's StandBy, and Back twice on Home). */
+    void startScreensaver() {
+        try {
+            startActivity(new Intent().setClassName("com.android.systemui", "com.android.systemui.Somnambulator")
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+        } catch (Exception ignored) {
+        }
+    }
+
+    /** Opens the first of [intents] this TV answers (for the Control Center). */
+    void openFirstOf(Intent... intents) {
+        openFirst(intents);
+    }
+
+    /** Sony's list of inputs (HDMI 1-4, the tuner). */
+    void openInputs() {
+        openFirst(new Intent("com.android.tv.action.VIEW_INPUTS"), new Intent("com.sony.dtv.tvsettings.intent.action.MANAGE_INPUTS"));
     }
 
     /**

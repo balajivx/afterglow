@@ -31,6 +31,8 @@ it. Without it the shelf stays empty and everything else works.
 | `ArtView.java` | Base for focusable pictures: fine ring, colour change, nothing grows |
 | `FadeFrame.java` | The page: fades children out at the screen's bottom edge |
 | `Net.java` | HTTP GET with caps, atomic file writes, picture decode/crop/cache |
+| `ControlCenter.java` | The Control Center panel (button over the sports card; Back closes): StandBy, Wi-Fi, Bluetooth (opens its settings: the remote uses Bluetooth), Inputs, Settings, round buttons (voice, Sony's Display & Sound, sleep timer `Sleeper`, picture off, Cast, `quick_input` HDMI port, screensaver, restart on a second press), picture profiles (through `Hotkeys.running`), volume (Sony API → Streambar over CEC), recent apps (usage stats) with each one's memory and a × to close it, Close all (running launchable apps minus `close_all_keep`) |
+| `Adb.java` | A tiny adb client to the TV's own debugging service (127.0.0.1:5555, RSA auth, `shell:`): the only way an app may `am force-stop` others or read `dumpsys meminfo` here. Its key lives in the app's files; the TV asked once to allow it |
 | `Hotkeys.java` | Picture hotkeys: an accessibility service that takes the remote's 0-9 in any app and applies `hotkey_N` profiles from `config.xml` through Sony's picture API at `http://127.0.0.1/sony/video` (IP control, `bravia.psk`); a small fading card says what happened. Turned on by `hotkeys.sh`. A profile's `motionflow` (not in the API, and not kept per picture mode on this TV) is set by working Sony's menu: IRCC button presses (gear, Picture settings, Motion, Motionflow's value strip), with accessibility only reading the highlighted row; it acts only when the menu names the input the TV says is playing (avContent getPlayingContentInfo: an app gives error 7, "Apps"; a CEC device is read by its port, "HDMI 4"). Settings an input lacks (`isAvailable` false, e.g. lightSensor on HDMI) are left out of the batch, since one refusal fails it all. Smoothness/Clearness ignore accessibility and stay set by hand. Its card times its own fade: the TV has animations off (scale 0), which ends `ValueAnimator`s at once |
 
 Resources: `res/values/config.xml` (dock order, hidden apps, weather place, columns, effects level, picture hotkeys),
@@ -39,8 +41,8 @@ Resources: `res/values/config.xml` (dock order, hidden apps, weather place, colu
 
 ## Rules this design keeps
 
-- Inputs and Settings sit over the sports card (`quickSlot`, built in `MainActivity.onCreate`; Inputs
-  sends `com.android.tv.action.VIEW_INPUTS`, which opens Sony's Inputs panel). Up from the card reaches them.
+- The Control Center's button sits over the sports card (`quickSlot`, built in `MainActivity.onCreate`);
+  Up from the card reaches it. Inputs and Settings live in the panel.
 - The shelf starts folded: just its head and a + button, on the line over the dock (no posters, story or
   backdrop). + opens it, − folds it again (`MainActivity.foldShelf`, `ShelfView.setCollapsed`).
 - Only titles out in the last two weeks, never older. Pages run newest first (page 1 the most recent);

@@ -10,4 +10,7 @@ adb shell rm /data/local/tmp/tvhome.apk
 adb shell pm grant $PKG android.permission.ACCESS_FINE_LOCATION || true
 # Lets the home screen turn the picture keys back on if Android ever turns them off
 adb shell pm grant $PKG android.permission.WRITE_SECURE_SETTINGS || true
+# Control Center: recent apps, and Bluetooth on/off
+adb shell appops set $PKG GET_USAGE_STATS allow || true
+adb shell pm grant $PKG android.permission.BLUETOOTH_CONNECT || true
 echo "Installed. Next: ./activate.sh"

@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- An example of launcher/app/src/main/res/values/personal.xml: sound keys tuned for one TV and one sound
+     system, kept out of git. Copy it there and change it to suit; without it, keys 7 and 8 do nothing new.
+
+     action=sound steps through [setups]_1, _2... a press at a time (setups=sound when not given), each its
+     name, then "Menu row=Option" worded as Sony's menus word them (Audio output: Speakers, Digital audio
+     out, Dolby Digital Plus output; Sound → Volume level: Dolby Dynamic Range, HE‑AAC Dynamic Range, the
+     last offered only while an app plays; HE‑AAC with the non-breaking hyphen &#8209;, as Sony writes it).
+     HDMI control=on|off switches HDMI-CEC (off stops a soundbar taking the sound back from the TV speakers);
+     restore=sound applies another key's setup; first=NAME is where that key starts when the sound comes
+     back from the TV speakers. -->
+<resources>
+    <string-array name="hotkey_7">
+        <item>Sound</item>
+        <item>action=sound</item>
+        <item>first=Clear voice</item>
+    </string-array>
+    <string-array name="sound_1">
+        <item>Clear voice</item>
+        <item>HDMI control=on</item>
+        <item>Speakers=Audio system</item>
+        <item>Digital audio out=PCM</item>
+        <item>Dolby Dynamic Range=Compressed</item>
+    </string-array>
+    <string-array name="sound_2">
+        <item>Full range</item>
+        <item>HDMI control=on</item>
+        <item>Speakers=Audio system</item>
+        <item>Digital audio out=PCM</item>
+        <item>Dolby Dynamic Range=Standard</item>
+    </string-array>
+
+    <string-array name="hotkey_8">
+        <item>Speakers</item>
+        <item>action=sound</item>
+        <item>setups=speakers</item>
+    </string-array>
+    <string-array name="speakers_1">
+        <item>TV speakers</item>
+        <item>HDMI control=off</item>
+        <item>Speakers=TV speakers</item>
+    </string-array>
+    <string-array name="speakers_2">
+        <item>Sound system</item>
+        <item>restore=sound</item>
+    </string-array>
+</resources>

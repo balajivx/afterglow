@@ -82,15 +82,25 @@ abstract class ArtView extends View {
     @Override
     protected void onFocusChanged(boolean gain, int direction, Rect previous) {
         super.onFocusChanged(gain, direction, previous);
+        if (!gain) pressed = false;
         ring.to(gain ? 1f : 0f, 200);
         focus.to(gain ? 1f : 0f, 240);
         invalidate();
     }
 
+    /**
+     * OK went down on this view. A press counts only when it both starts and ends here: OK on an app's
+     * "Exit?" closes the app as the key goes down, and its release then lands on the Home screen, on the
+     * tile that opened the app, which would open it straight back up.
+     */
+    private boolean pressed;
+
     @Override
     public boolean onKeyUp(int keyCode, KeyEvent event) {
         if (isConfirm(keyCode)) {
-            if (!event.isCanceled()) performClick();
+            boolean click = pressed && !event.isCanceled();
+            pressed = false;
+            if (click) performClick();
             return true;
         }
         return super.onKeyUp(keyCode, event);
@@ -98,7 +108,10 @@ abstract class ArtView extends View {
 
     @Override
     public boolean onKeyDown(int keyCode, KeyEvent event) {
-        if (isConfirm(keyCode)) return true;
+        if (isConfirm(keyCode)) {
+            if (event.getRepeatCount() == 0) pressed = true;
+            return true;
+        }
         return super.onKeyDown(keyCode, event);
     }
 

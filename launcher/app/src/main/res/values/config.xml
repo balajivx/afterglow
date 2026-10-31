@@ -93,10 +93,10 @@
         <item>Sports</item>
         <item>pictureMode=custom</item>
         <item>brightness=46</item>
-        <item>contrast=95</item>
-        <item>color=65</item>
-        <item>sharpness=55</item>
-        <item>colorTemperature=cool</item>
+        <item>contrast=90</item>
+        <item>color=55</item>
+        <item>sharpness=50</item>
+        <item>colorTemperature=neutral</item>
         <item>autoLocalDimming=medium</item>
         <item>lightSensor=off</item>
         <item>motionflow=custom</item>
@@ -104,21 +104,21 @@
     <string-array name="hotkey_2">
         <item>Movies</item>
         <item>pictureMode=cinema</item>
-        <item>brightness=42</item>
-        <item>contrast=95</item>
-        <item>color=58</item>
+        <item>brightness=40</item>
+        <item>contrast=90</item>
+        <item>color=50</item>
         <item>sharpness=50</item>
-        <item>colorTemperature=neutral</item>
-        <item>autoLocalDimming=high</item>
+        <item>colorTemperature=expert1</item>
+        <item>autoLocalDimming=medium</item>
         <item>lightSensor=off</item>
         <item>motionflow=auto</item>
     </string-array>
     <string-array name="hotkey_3">
         <item>Gaming</item>
         <item>pictureMode=game</item>
-        <item>brightness=50</item>
-        <item>contrast=95</item>
-        <item>color=60</item>
+        <item>brightness=46</item>
+        <item>contrast=90</item>
+        <item>color=52</item>
         <item>sharpness=50</item>
         <item>colorTemperature=neutral</item>
         <item>autoLocalDimming=medium</item>
@@ -136,10 +136,10 @@
     <string-array name="hotkey_5">
         <item>Everyday</item>
         <item>pictureMode=standard</item>
-        <item>brightness=46</item>
-        <item>contrast=95</item>
-        <item>color=60</item>
-        <item>sharpness=52</item>
+        <item>brightness=44</item>
+        <item>contrast=90</item>
+        <item>color=52</item>
+        <item>sharpness=50</item>
         <item>colorTemperature=neutral</item>
         <item>autoLocalDimming=medium</item>
         <item>lightSensor=off</item>
@@ -149,4 +149,7 @@
         <item>Picture off</item>
         <item>action=pictureOff</item>
     </string-array>
+    <!-- Keys 7 and 8 (sound) are personal to each TV and sound system, so they live in personal.xml beside
+         this file, which git ignores; launcher/personal.example.xml shows the format. Without it the keys do
+         what they always did. -->
 </resources>

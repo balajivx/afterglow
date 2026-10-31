@@ -14,3 +14,7 @@ launcher/build/
 
 # Screenshots taken with the "Screenshot from TV" task
 shots/
+
+# Personal settings for this house (sound keys, tuning notes): not for the public repo
+launcher/app/src/main/res/values/personal.xml
+PERSONAL.md

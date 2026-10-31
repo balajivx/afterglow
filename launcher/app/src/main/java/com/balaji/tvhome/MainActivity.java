@@ -15,6 +15,7 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
+import android.view.KeyEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.FrameLayout;
@@ -84,6 +85,8 @@ public class MainActivity extends Activity {
     private Shelf.ShelfButton controlButton;
     private ControlCenter controlCenter;
     private boolean weatherBusy, shelfBusy, resumed;
+    /** A restart of the picture keys is under way (keepHotkeysOn). */
+    private boolean restartingHotkeys;
     private long shelfQuietUntil;
 
     private final Map<String, DockView.App> apps = new LinkedHashMap<>();
@@ -238,10 +241,37 @@ public class MainActivity extends Activity {
         }
     }
 
+    /**
+     * OK went down while Home had the keys. A guard for every button on the page, on top of [ArtView]'s own:
+     * an OK released here that wasn't pressed here (the app before it closed on the key going down, as OK
+     * on an app's "Exit?" does) is dropped, so it can never open the tile that's highlighted.
+     */
+    private boolean confirmDown;
+
+    @Override
+    public boolean dispatchKeyEvent(KeyEvent e) {
+        int k = e.getKeyCode();
+        boolean confirm = k == KeyEvent.KEYCODE_DPAD_CENTER || k == KeyEvent.KEYCODE_ENTER
+                || k == KeyEvent.KEYCODE_NUMPAD_ENTER || k == KeyEvent.KEYCODE_BUTTON_A;
+        if (confirm && e.getAction() == KeyEvent.ACTION_DOWN && e.getRepeatCount() == 0) confirmDown = true;
+        if (confirm && e.getAction() == KeyEvent.ACTION_UP) {
+            if (!confirmDown) return true; // a release left over from the app before
+            confirmDown = false;
+        }
+        return super.dispatchKeyEvent(e);
+    }
+
+    @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        confirmDown = false; // a press doesn't carry across apps, dialogs or the screensaver
+    }
+
     @Override
     protected void onResume() {
         super.onResume();
         resumed = true;
+        confirmDown = false;
         keepHotkeysOn();
         sceneView.setRunning(true);
         if (reloadNeeded()) loadApps();
@@ -339,19 +369,59 @@ public class MainActivity extends Activity {
     }
 
     /**
-     * Turns the picture keys (Hotkeys) back on if they're off: Android turns off an accessibility service
-     * that keeps crashing, and Sony's updates can clear the list. Needs WRITE_SECURE_SETTINGS, which
-     * install.sh grants; without it this does nothing.
+     * Turns the picture keys (Hotkeys) back on if they're off: Sony's updates can clear the list, and
+     * Android stops an accessibility service that crashed (this app lives on the USB drive, which isn't
+     * there yet early in a start-up) and leaves it listed but unbound until it's turned off and on.
+     * So a listed service that still isn't running a few seconds after Home shows is turned off and on.
+     * Needs WRITE_SECURE_SETTINGS, which install.sh grants; without it this does nothing.
      */
     private void keepHotkeysOn() {
         if (checkSelfPermission(android.Manifest.permission.WRITE_SECURE_SETTINGS) != PackageManager.PERMISSION_GRANTED) return;
+        if (Hotkeys.running != null) return;
         String me = new android.content.ComponentName(this, Hotkeys.class).flattenToString();
         android.content.ContentResolver cr = getContentResolver();
         String on = android.provider.Settings.Secure.getString(cr, android.provider.Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES);
-        if (on != null && Arrays.asList(on.split(":")).contains(me)) return;
+        List<String> others = new ArrayList<>();
+        boolean listed = false;
+        if (on != null && !on.isEmpty() && !on.equals("null")) {
+            for (String s : on.split(":")) {
+                if (s.equals(me)) listed = true;
+                else if (!s.isEmpty()) others.add(s);
+            }
+        }
+        if (!listed) {
+            turnHotkeysOn(others, me);
+            return;
+        }
+        // Listed: give Android a moment to connect it (it does at start-up), then restart it if it hasn't.
+        if (restartingHotkeys) return;
+        restartingHotkeys = true;
+        handler.postDelayed(() -> {
+            if (Hotkeys.running != null) {
+                restartingHotkeys = false;
+                return;
+            }
+            try {
+                android.provider.Settings.Secure.putString(cr, android.provider.Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES,
+                        String.join(":", others));
+            } catch (SecurityException ignored) {
+                restartingHotkeys = false;
+                return;
+            }
+            handler.postDelayed(() -> {
+                turnHotkeysOn(others, me);
+                restartingHotkeys = false;
+            }, 1000);
+        }, 4000);
+    }
+
+    private void turnHotkeysOn(List<String> others, String me) {
+        List<String> all = new ArrayList<>(others);
+        all.add(me);
         try {
+            android.content.ContentResolver cr = getContentResolver();
             android.provider.Settings.Secure.putString(cr, android.provider.Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES,
-                    on == null || on.isEmpty() || on.equals("null") ? me : on + ":" + me);
+                    String.join(":", all));
             android.provider.Settings.Secure.putInt(cr, android.provider.Settings.Secure.ACCESSIBILITY_ENABLED, 1);
         } catch (SecurityException ignored) {
         }

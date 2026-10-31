@@ -67,6 +67,9 @@ Resources: `res/values/config.xml` (dock order, hidden apps, weather place, colu
 - **Testing on the TV:** never run scripts that press keys or open Sony's menus while someone is using the
   TV, and stop them the moment the user needs it (a script's stray OK reopened apps). Never watch the
   hotkeys with `uiautomator dump`: it suspends accessibility services (use `dumpsys activity activities`).
+- **Switching inputs from a script** (avContent setPlayContent) leaves Sony's TV player (`com.sony.dtv.tvx`)
+  in the task list on that input; closing any app then falls back to it and wakes that device (the Roku on
+  HDMI 3, 31 Oct). Finish with Home and `adb shell am stack remove <task id>` for its task.
 - Comments explain what and why in plain words; match the existing style.
 - This TV has system animations switched off: don't rely on `ValueAnimator` for anything that must be seen
   (use `Ui.Tween` / `Ui.now()`). Apps can't close other apps here (`killBackgroundProcesses` is refused);

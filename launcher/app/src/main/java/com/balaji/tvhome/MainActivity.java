@@ -5,6 +5,7 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.content.pm.LauncherApps;
 import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
 import android.graphics.Bitmap;
@@ -15,6 +16,7 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
+import android.os.UserHandle;
 import android.view.KeyEvent;
 import android.view.View;
 import android.view.ViewGroup;
@@ -64,6 +66,13 @@ public class MainActivity extends Activity {
     private View content;
     private android.animation.ValueAnimator pageAnim;
     private final Bitmap[] heroes = new Bitmap[Shelf.COUNT];
+    private LauncherApps launcherApps;
+    private final Map<String, Bitmap> coverCache = new HashMap<>();
+    private final Map<String, Integer> colorCache = new HashMap<>();
+    private static final int[] WAKE_RETRY_DELAYS_MS = {400, 1000, 1800, 3000, 5000, 8000, 12000};
+    private final Runnable appRetryRunnable = () -> {
+        if (reloadNeeded()) loadApps();
+    };
 
     private Sports.CardView sports;
     private Sports.Source sportsSource;
@@ -196,6 +205,14 @@ public class MainActivity extends Activity {
         loadApps();
         focusDock();
 
+        launcherApps = getSystemService(LauncherApps.class);
+        if (launcherApps != null) {
+            try {
+                launcherApps.registerCallback(launcherAppsCallback, handler);
+            } catch (Exception ignored) {
+            }
+        }
+
         IntentFilter packages = new IntentFilter();
         packages.addAction(Intent.ACTION_PACKAGE_ADDED);
         packages.addAction(Intent.ACTION_PACKAGE_REMOVED);
@@ -203,6 +220,20 @@ public class MainActivity extends Activity {
         packages.addAction(Intent.ACTION_PACKAGE_REPLACED);
         packages.addDataScheme("package");
         registerReceiver(packageReceiver, packages);
+
+        IntentFilter external = new IntentFilter();
+        external.addAction(Intent.ACTION_EXTERNAL_APPLICATIONS_AVAILABLE);
+        external.addAction(Intent.ACTION_EXTERNAL_APPLICATIONS_UNAVAILABLE);
+        registerReceiver(externalStorageReceiver, external);
+
+        IntentFilter media = new IntentFilter();
+        media.addAction(Intent.ACTION_MEDIA_MOUNTED);
+        media.addAction(Intent.ACTION_MEDIA_UNMOUNTED);
+        media.addAction(Intent.ACTION_MEDIA_EJECT);
+        media.addDataScheme("file");
+        registerReceiver(externalStorageReceiver, media);
+
+        scheduleAppRetries();
         ConnectivityManager cm = getSystemService(ConnectivityManager.class);
         if (cm != null) cm.registerDefaultNetworkCallback(networkCallback);
     }
@@ -275,6 +306,7 @@ public class MainActivity extends Activity {
         keepHotkeysOn();
         sceneView.setRunning(true);
         if (reloadNeeded()) loadApps();
+        scheduleAppRetries();
         if (getCurrentFocus() == null) focusDock();
         startClock();
         loadWeather();
@@ -290,6 +322,7 @@ public class MainActivity extends Activity {
         resumed = false;
         controlCenter.close(); // back on Home, the page as it was
         sceneView.setRunning(false);
+        handler.removeCallbacks(appRetryRunnable);
         handler.removeCallbacks(ticker);
         handler.removeCallbacks(refresher);
         handler.removeCallbacks(retryWeather);
@@ -300,8 +333,18 @@ public class MainActivity extends Activity {
     protected void onDestroy() {
         super.onDestroy();
         handler.removeCallbacksAndMessages(null);
+        if (launcherApps != null) {
+            try {
+                launcherApps.unregisterCallback(launcherAppsCallback);
+            } catch (Exception ignored) {
+            }
+        }
         try {
             unregisterReceiver(packageReceiver);
+        } catch (IllegalArgumentException ignored) {
+        }
+        try {
+            unregisterReceiver(externalStorageReceiver);
         } catch (IllegalArgumentException ignored) {
         }
         ConnectivityManager cm = getSystemService(ConnectivityManager.class);
@@ -431,16 +474,42 @@ public class MainActivity extends Activity {
 
     private List<ResolveInfo> query() {
         PackageManager pm = getPackageManager();
-        List<ResolveInfo> l = pm.queryIntentActivities(
+        List<ResolveInfo> leanback = pm.queryIntentActivities(
                 new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LEANBACK_LAUNCHER), 0);
-        if (l.isEmpty()) l = pm.queryIntentActivities(new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER), 0);
-        return l;
+        List<ResolveInfo> standard = pm.queryIntentActivities(
+                new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER), 0);
+        if (standard == null || standard.isEmpty()) return leanback != null ? leanback : Collections.emptyList();
+        Map<String, ResolveInfo> byPkg = new LinkedHashMap<>();
+        if (leanback != null) {
+            for (ResolveInfo ri : leanback) {
+                if (ri.activityInfo != null) byPkg.put(ri.activityInfo.packageName, ri);
+            }
+        }
+        for (ResolveInfo ri : standard) {
+            if (ri.activityInfo != null && !byPkg.containsKey(ri.activityInfo.packageName)) {
+                byPkg.put(ri.activityInfo.packageName, ri);
+            }
+        }
+        return new ArrayList<>(byPkg.values());
     }
 
     private boolean reloadNeeded() {
         StringBuilder sb = new StringBuilder();
         for (ResolveInfo ri : query()) sb.append(ri.activityInfo.packageName).append('|');
         return !sb.toString().equals(signature);
+    }
+
+    private void scheduleAppRetries() {
+        handler.removeCallbacks(appRetryRunnable);
+        for (int delay : WAKE_RETRY_DELAYS_MS) {
+            handler.postDelayed(appRetryRunnable, delay);
+        }
+    }
+
+    private void checkAppsReload() {
+        handler.post(() -> {
+            if (reloadNeeded()) loadApps();
+        });
     }
 
     /**
@@ -487,28 +556,55 @@ public class MainActivity extends Activity {
         dockSlot.setLayoutParams(dl);
         if (hadFocus || getCurrentFocus() == null) focusDock();
 
+        // Immediately apply any already-cached covers and colors to avoid flashing
+        for (DockView.Tile t : dock.tiles) {
+            Bitmap cachedArt = coverCache.get(t.app.pkg);
+            Integer cachedColor = colorCache.get(t.app.pkg);
+            if (cachedColor != null) {
+                t.app.color = cachedColor;
+                t.glowColor = cachedColor;
+            }
+            if (cachedArt != null) {
+                t.setArt(cachedArt);
+                if (t.isFocused()) sceneView.glow(t.glowColor);
+            }
+        }
+
         int[] size = dock.coverSize(dl.width);
         coverIo.execute(() -> {
             Map<String, Bitmap> covers = new HashMap<>();
             Map<String, Integer> colors = new HashMap<>();
             for (DockView.App a : ordered) {
                 try {
+                    Bitmap cached = coverCache.get(a.pkg);
+                    Integer cachedColor = colorCache.get(a.pkg);
+                    if (cached != null && cachedColor != null) {
+                        covers.put(a.pkg, cached);
+                        colors.put(a.pkg, cachedColor);
+                        continue;
+                    }
                     Drawable icon = a.ri.loadIcon(pm);
                     Integer brand = DockView.BRANDS.get(a.pkg);
                     int color = brand != null ? brand : DockView.Covers.iconColor(icon);
+                    Bitmap drawn = DockView.Covers.draw(this, icon, color, size[0], size[1]);
                     colors.put(a.pkg, color);
-                    covers.put(a.pkg, DockView.Covers.draw(this, icon, color, size[0], size[1]));
+                    covers.put(a.pkg, drawn);
                 } catch (RuntimeException ignored) {
                 }
             }
             handler.post(() -> {
+                coverCache.putAll(covers);
+                colorCache.putAll(colors);
                 for (DockView.Tile t : dock.tiles) {
                     Integer c = colors.get(t.app.pkg);
                     if (c != null) {
                         t.app.color = c;
                         t.glowColor = c;
                     }
-                    t.setArt(covers.get(t.app.pkg));
+                    Bitmap art = covers.get(t.app.pkg);
+                    if (art != null) {
+                        t.setArt(art);
+                    }
                     if (t.isFocused()) sceneView.glow(t.glowColor);
                 }
                 if (shelfItems != null) showShelf(shelfItems, null);
@@ -540,10 +636,48 @@ public class MainActivity extends Activity {
         if (a != null) launch(a);
     }
 
+    private final LauncherApps.Callback launcherAppsCallback = new LauncherApps.Callback() {
+        @Override
+        public void onPackageAdded(String packageName, UserHandle user) {
+            checkAppsReload();
+        }
+
+        @Override
+        public void onPackageRemoved(String packageName, UserHandle user) {
+            coverCache.remove(packageName);
+            colorCache.remove(packageName);
+            checkAppsReload();
+        }
+
+        @Override
+        public void onPackageChanged(String packageName, UserHandle user) {
+            coverCache.remove(packageName);
+            colorCache.remove(packageName);
+            checkAppsReload();
+        }
+
+        @Override
+        public void onPackagesAvailable(String[] packageNames, UserHandle user, boolean replacing) {
+            checkAppsReload();
+        }
+
+        @Override
+        public void onPackagesUnavailable(String[] packageNames, UserHandle user, boolean replacing) {
+            checkAppsReload();
+        }
+    };
+
     private final BroadcastReceiver packageReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context c, Intent i) {
-            if (reloadNeeded()) loadApps();
+            checkAppsReload();
+        }
+    };
+
+    private final BroadcastReceiver externalStorageReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context c, Intent i) {
+            checkAppsReload();
         }
     };
 
@@ -931,6 +1065,7 @@ public class MainActivity extends Activity {
     private final Runnable refresher = new Runnable() {
         @Override
         public void run() {
+            if (reloadNeeded()) loadApps();
             loadWeather();
             loadShelf();
             loadSports();

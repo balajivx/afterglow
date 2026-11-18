@@ -46,6 +46,18 @@ public final class DnsFilterEngine {
     public final AtomicLong totalQueries = new AtomicLong();
     public final AtomicLong blockedQueries = new AtomicLong();
     public final AtomicLong failedQueries = new AtomicLong();
+    /** Answered on the phone from the cache (no trip over the network). */
+    public final AtomicLong cacheHits = new AtomicLong();
+    /** The network failed to answer in time; the last known good answer kept the app working. */
+    public final AtomicLong staleServed = new AtomicLong();
+    public volatile boolean cacheEnabled = true;
+    private final DnsCache cache = new DnsCache();
+    /** Test hook: shifts the clock used for cache expiry. */
+    public volatile long testClockOffsetMs;
+
+    long nowMs() { return System.currentTimeMillis() + testClockOffsetMs; }
+
+    public int cacheSize() { return cache.size(); }
 
     private static final int RECENT_MAX = 100;
     private final BlockedEntry[] recent = new BlockedEntry[RECENT_MAX];
@@ -90,14 +102,42 @@ public final class DnsFilterEngine {
             return true;
         }
 
+        if (cacheEnabled && q.name != null) {
+            byte[] hit = cache.get(q, nowMs(), false);
+            if (hit != null) {
+                cacheHits.incrementAndGet();
+                try { sink.write(DnsPacket.wrapResponse(q, hit, hit.length)); } catch (IOException ignored) { }
+                return true;
+            }
+        }
+
         executor.execute(new Runnable() {
             @Override public void run() {
+                byte[] resp = null;
                 try {
-                    byte[] resp = upstream.resolve(q.dns);
-                    if (resp == null || resp.length < 12) { failedQueries.incrementAndGet(); return; }
-                    sink.write(DnsPacket.wrapResponse(q, resp, resp.length));
+                    resp = upstream.resolve(q.dns);
                 } catch (IOException e) {
-                    failedQueries.incrementAndGet();  // app's resolver will retry
+                    // timed out over the weak link: fall through to serve-stale
+                }
+                try {
+                    boolean good = resp != null && resp.length >= 12 && (resp[3] & 0x0F) != 2;  // not SERVFAIL
+                    if (good) {
+                        if (cacheEnabled) cache.put(q, resp, nowMs());
+                        sink.write(DnsPacket.wrapResponse(q, resp, resp.length));
+                        return;
+                    }
+                    byte[] stale = cacheEnabled ? cache.get(q, nowMs(), true) : null;
+                    if (stale != null) {
+                        staleServed.incrementAndGet();
+                        sink.write(DnsPacket.wrapResponse(q, stale, stale.length));
+                    } else if (resp != null && resp.length >= 12) {
+                        sink.write(DnsPacket.wrapResponse(q, resp, resp.length));   // the SERVFAIL itself
+                        failedQueries.incrementAndGet();
+                    } else {
+                        failedQueries.incrementAndGet();  // app's resolver will retry
+                    }
+                } catch (IOException ignored) {
+                    // tun closed while shutting down
                 }
             }
         });

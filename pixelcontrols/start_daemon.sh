@@ -11,6 +11,58 @@ cat << 'EOF' > $T/lowsignal_helper.sh
 DNS_BACKUP=/data/local/tmp/pc_privdns_backup
 STRICT_MARK=/data/local/tmp/pc_strict_by_us
 FALLBACK_MARK=/data/local/tmp/pc_dns_fallback
+LS_MARK=/data/local/tmp/pc_lowsignal_on
+SET_BACKUP=/data/local/tmp/pc_settings_backup
+DS_BACKUP=/data/local/tmp/pc_datasaver_backup
+KEEP=/data/local/tmp/pc_keepalive_added
+
+# Remember a setting's value before Low signal mode changes it (first time only).
+save_setting() {
+    grep -q "^$1 $2 " "$SET_BACKUP" 2>/dev/null && return 0
+    echo "$1 $2 $(settings get "$1" "$2" 2>/dev/null)" >> "$SET_BACKUP"
+}
+
+restore_settings() {
+    [ -f "$SET_BACKUP" ] || return 1
+    while read -r ns key val; do
+        if [ -z "$val" ] || [ "$val" = "null" ]; then settings delete "$ns" "$key" </dev/null >/dev/null 2>&1
+        else settings put "$ns" "$key" "$val" </dev/null >/dev/null 2>&1; fi
+    done < "$SET_BACKUP"
+    rm -f "$SET_BACKUP"
+    return 0
+}
+
+# The app on screen right now (package name), or nothing.
+foreground_pkg() {
+    dumpsys activity activities </dev/null 2>/dev/null | grep -m 1 -E "topResumedActivity|mResumedActivity" \
+        | sed -n 's/.* u[0-9][0-9]* \([A-Za-z0-9_.]*\)\/.*/\1/p'
+}
+
+# Let one app keep using data in the background while Data Saver and Battery Saver are on.
+# Only exemptions we add are recorded, so OFF never removes ones the user or system made.
+keep_alive() {
+    pkg="$1"
+    [ -n "$pkg" ] || return 0
+    uid=$(cmd package list packages -U "$pkg" </dev/null 2>/dev/null | sed -n "s/^package:$pkg uid:\([0-9][0-9]*\).*/\1/p" | head -n 1)
+    [ -n "$uid" ] || return 0
+    if ! cmd netpolicy list restrict-background-whitelist </dev/null 2>/dev/null | grep -qw "$uid"; then
+        cmd netpolicy add restrict-background-whitelist "$uid" </dev/null >/dev/null 2>&1 && echo "net $uid $pkg" >> "$KEEP"
+    fi
+    if ! cmd deviceidle whitelist </dev/null 2>/dev/null | grep -q ",$pkg,"; then
+        cmd deviceidle whitelist +"$pkg" </dev/null >/dev/null 2>&1 && echo "idle $pkg" >> "$KEEP"
+    fi
+}
+
+release_all() {
+    [ -f "$KEEP" ] || return 0
+    while read -r kind a b; do
+        case "$kind" in
+            net) cmd netpolicy remove restrict-background-whitelist "$a" </dev/null >/dev/null 2>&1 ;;
+            idle) cmd deviceidle whitelist -"$a" </dev/null >/dev/null 2>&1 ;;
+        esac
+    done < "$KEEP"
+    rm -f "$KEEP"
+}
 
 backup_dns() {
     # Remember the user's own Private DNS setting once, so we can put it back exactly.
@@ -35,7 +87,20 @@ while read -r line; do
     cmd=$(echo "$line" | tr -d '\r\n')
     case "$cmd" in
         ON)
+            touch "$LS_MARK"
+            # Remember everything we change so OFF can put it back exactly.
+            if [ ! -f "$DS_BACKUP" ]; then
+                if cmd netpolicy get restrict-background </dev/null 2>/dev/null | grep -qi "enabled"; then
+                    echo enabled > "$DS_BACKUP"; else echo disabled > "$DS_BACKUP"; fi
+            fi
+            for k in low_power low_power_sticky battery_saver_constants mobile_data_always_on \
+                     network_avoid_bad_wifi preferred_network_mode preferred_network_mode1 preferred_network_mode2; do
+                save_setting global "$k"
+            done
+            # Data Saver: background apps stop competing for the weak link, so the app you're
+            # using gets all of it.
             cmd netpolicy set restrict-background true </dev/null >/dev/null 2>&1
+            # Stay on LTE/3G/2G instead of hunting for a weak 5G signal (drops only the 5G bit).
             cmd phone set-allowed-network-types-for-users -s 0 01111111111111111111 </dev/null >/dev/null 2>&1
             settings put global battery_saver_constants enable_datasaver=true
             settings put global low_power 1
@@ -43,6 +108,9 @@ while read -r line; do
             settings put global preferred_network_mode 9,9
             settings put global preferred_network_mode1 9
             settings put global preferred_network_mode2 9
+            # Keep mobile data ready, and leave a weak Wi-Fi for mobile data quickly.
+            settings put global mobile_data_always_on 1
+            settings put global network_avoid_bad_wifi 1
             # Weak signal: strict Private DNS (DNS-over-TLS, port 853) is the first thing to fail,
             # and Android never falls back from strict mode, so every lookup dies and the phone
             # reports "no Internet access". Automatic mode encrypts when the network allows it and
@@ -50,36 +118,66 @@ while read -r line; do
             backup_dns
             rm -f "$STRICT_MARK"
             settings put global private_dns_mode opportunistic
-            settings put global mobile_data_always_on 0
+            # Keep the app you're using, and PixelControls (its adblock DNS filter answers every
+            # app's lookups), online even when they're in the background.
+            keep_alive com.pixelcontrols
+            keep_alive "$(foreground_pkg)"
             echo "OK:ON"
             ;;
         OFF)
-            cmd netpolicy set restrict-background false </dev/null >/dev/null 2>&1
-            cmd phone set-allowed-network-types-for-users -s 0 11111111111111111111 </dev/null >/dev/null 2>&1
-            settings put global low_power 0
-            settings put global low_power_sticky 0
-            settings put global battery_saver_constants enable_datasaver=false
-
-            MANUF=$(getprop ro.product.manufacturer 2>/dev/null)
-            if [ "$MANUF" = "Xiaomi" ] || [ "$MANUF" = "xiaomi" ]; then
-                NORM="32"
+            rm -f "$LS_MARK"
+            if [ -f "$DS_BACKUP" ] && [ "$(cat "$DS_BACKUP")" = "enabled" ]; then
+                cmd netpolicy set restrict-background true </dev/null >/dev/null 2>&1
             else
-                NORM="27"
+                cmd netpolicy set restrict-background false </dev/null >/dev/null 2>&1
             fi
-            settings put global preferred_network_mode "${NORM},${NORM}"
-            settings put global preferred_network_mode1 "$NORM"
-            settings put global preferred_network_mode2 "$NORM"
+            rm -f "$DS_BACKUP"
+            cmd phone set-allowed-network-types-for-users -s 0 11111111111111111111 </dev/null >/dev/null 2>&1
+            if ! restore_settings; then
+                # Turned on by an older version (no backup): fall back to sensible defaults.
+                settings put global low_power 0
+                settings put global low_power_sticky 0
+                settings put global battery_saver_constants enable_datasaver=false
+                MANUF=$(getprop ro.product.manufacturer 2>/dev/null)
+                if [ "$MANUF" = "Xiaomi" ] || [ "$MANUF" = "xiaomi" ]; then NORM="32"; else NORM="27"; fi
+                settings put global preferred_network_mode "${NORM},${NORM}"
+                settings put global preferred_network_mode1 "$NORM"
+                settings put global preferred_network_mode2 "$NORM"
+                settings put global mobile_data_always_on 1
+            fi
             restore_dns          # back to exactly what the user had before
-            settings put global mobile_data_always_on 1
+            release_all
             echo "OK:OFF"
             ;;
+        KEEP\ *)
+            # The app asks to keep a specific app online (e.g. UPI/banking) during Low signal mode.
+            pkg=${cmd#KEEP }
+            case "$pkg" in
+                ""|*[!A-Za-z0-9_.]*) echo "ERR:bad_package" ;;
+                *)  if [ -f "$LS_MARK" ]; then keep_alive "$pkg"; echo "OK:KEEP"; else echo "ERR:low_signal_off"; fi ;;
+            esac
+            ;;
+        KEEPALIVE_FG)
+            # Called every few seconds by the watchdog while Low signal mode is on.
+            if [ -f "$LS_MARK" ]; then
+                fg=$(foreground_pkg)
+                case "$fg" in
+                    ""|*launcher*|com.android.systemui|com.pixelcontrols) ;;
+                    *)  n=0; [ -f "$KEEP" ] && n=$(grep -c "^idle" "$KEEP")
+                        [ "$n" -lt 12 ] && keep_alive "$fg" ;;
+                esac
+            fi
+            echo "OK:KEEPALIVE_FG"
+            ;;
         STATUS)
-            saver=$(cmd netpolicy get restrict-background 2>/dev/null | grep -ic "enabled")
-            types=$(cmd phone get-allowed-network-types-for-users 2>/dev/null | grep -ic "NR")
+            saver=$(cmd netpolicy get restrict-background </dev/null 2>/dev/null | grep -ic "enabled")
+            types=$(cmd phone get-allowed-network-types-for-users </dev/null 2>/dev/null | grep -ic "NR")
             lp=$(settings get global low_power 2>/dev/null)
             pdns=$(settings get global private_dns_mode 2>/dev/null)
             fb=0; [ -f "$FALLBACK_MARK" ] && fb=1
-            echo "STATUS:saver=$saver:has_nr=$types:low_power=$lp:private_dns=$pdns:dns_fallback=$fb"
+            ls=0; [ -f "$LS_MARK" ] && ls=1
+            kept=0; [ -f "$KEEP" ] && kept=$(grep -c "^idle" "$KEEP")
+            echo "STATUS:saver=$saver:has_nr=$types:low_power=$lp:private_dns=$pdns:dns_fallback=$fb:low_signal=$ls:kept=$kept"
             ;;
         DSLR_ON)
             settings put system display_color_mode 0 </dev/null >/dev/null 2>&1
@@ -114,6 +212,12 @@ while read -r line; do
             settings put global private_dns_mode opportunistic
             echo "OK:PRIVDNS_AUTO"
             ;;
+        PRIVDNS_FIX)
+            # Network doctor: strict Private DNS is unreachable and the phone has no internet.
+            settings put global private_dns_mode opportunistic
+            rm -f "$STRICT_MARK"
+            echo "OK:PRIVDNS_FIX"
+            ;;
         PRIVDNS_RESTORE)
             restore_dns
             echo "OK:PRIVDNS_RESTORE"
@@ -126,6 +230,16 @@ while read -r line; do
 done
 EOF
 chmod 755 $T/lowsignal_helper.sh
+
+# 0. Clean up after older PixelControls versions, whose Low signal mode left strict
+#    one.one.one.one Private DNS behind ("Private DNS server cannot be accessed").
+if [ "$(settings get global private_dns_mode 2>/dev/null)" = "hostname" ] \
+   && [ "$(settings get global private_dns_specifier 2>/dev/null)" = "one.one.one.one" ] \
+   && [ ! -f $T/pc_privdns_backup ]; then
+    settings put global private_dns_mode opportunistic
+    settings delete global private_dns_specifier >/dev/null 2>&1
+    echo "Fixed: Private DNS left in strict mode by an older version is now Automatic"
+fi
 
 # 2a. Stop a previous DNS watchdog
 if [ -f $T/pc_watchdog.pid ]; then
@@ -162,11 +276,13 @@ nohup /system/bin/sh $T/run_lowsignal_loop.sh </dev/null >/dev/null 2>&1 &
 cat << 'WDEOF' > $T/pc_dns_watchdog.sh
 #!/system/bin/sh
 T=/data/local/tmp
-INTERVAL=${PC_WD_INTERVAL:-30}
+INTERVAL=${PC_WD_INTERVAL:-10}
 echo $$ > $T/pc_watchdog.pid
 fails=0
 while true; do
     sleep "$INTERVAL"
+    # Low signal mode: keep whichever app is on screen online in the background too.
+    [ -f $T/pc_lowsignal_on ] && echo KEEPALIVE_FG | /system/bin/sh $T/lowsignal_helper.sh >/dev/null 2>&1
     if [ "$(settings get global private_dns_mode 2>/dev/null)" != "hostname" ] || [ ! -f $T/pc_strict_by_us ]; then
         fails=0; continue
     fi

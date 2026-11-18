@@ -51,7 +51,8 @@ public class MainActivity extends Activity {
     private LinearLayout root;
     private Switch adblockSwitch, videoSwitch;
     private RadioButton modeVpn, modeDns;
-    private TextView adblockStatus, daemonStatus;
+    private TextView adblockStatus, daemonStatus, doctor;
+    private Button doctorFix;
     private Button pauseBtn;
     private boolean updating;
     private volatile String daemonLine = "Checking helper daemon…";
@@ -68,6 +69,13 @@ public class MainActivity extends Activity {
         setContentView(scroll);
 
         title("PixelControls", 26);
+
+        // Network doctor: appears only when Private DNS is what's cutting the phone off.
+        doctor = body("");
+        doctor.setTextColor(0xFFD93025);
+        doctor.setVisibility(View.GONE);
+        doctorFix = button("Fix now: set Private DNS to Automatic", click(new Runnable() { public void run() { fixDns(); } }));
+        doctorFix.setVisibility(View.GONE);
 
         // ---------------------------------------------------------- adblock
         section("Adblock");
@@ -130,23 +138,26 @@ public class MainActivity extends Activity {
                 + "Long-press the app icon for a \"Toggle Adblock\" shortcut too.");
 
         // ---------------------------------------------------------- photo
-        section("Pro Enhance (photos)");
-        body("Open any photo in Google Photos → Share → Pro Enhance (or Edit → ⋮ → Edit in… → Pro Enhance). "
+        section("DSLR");
+        body("Just took a photo? Swipe down and tap the DSLR tile: it edits your latest photo and saves the copy. "
+                + "Any other photo: in your gallery (Google Photos, Samsung, Xiaomi, Files…) use Share → DSLR, Edit in → DSLR, or Open with → DSLR. "
+                + "Each photo is analyzed and gets its own settings. "
                 + "You get a copy that looks shot with the right exposure, white balance, and detail; the original is never changed.");
-        button("Enhance a photo…", click(new Runnable() { public void run() { startActivity(new Intent(MainActivity.this, EnhanceActivity.class)); } }));
+        button("DSLR: edit a photo…", click(new Runnable() { public void run() { startActivity(new Intent(MainActivity.this, EnhanceActivity.class)); } }));
 
         // ---------------------------------------------------------- daemon
-        section("Network & display (helper daemon)");
+        section("Network (helper daemon)");
         daemonStatus = body("");
         LinearLayout row1 = row();
         rowButton(row1, "Low signal ON", click(new Runnable() { public void run() { daemon("ON", true); } }));
         rowButton(row1, "Low signal OFF", click(new Runnable() { public void run() { daemon("OFF", true); } }));
-        LinearLayout row2 = row();
-        rowButton(row2, "DSLR colors ON", click(new Runnable() { public void run() { daemon("DSLR_ON", false); } }));
-        rowButton(row2, "DSLR colors OFF", click(new Runnable() { public void run() { daemon("DSLR_OFF", false); } }));
-        small("Low signal mode: 4G/3G only (no 5G hunting), Data Saver and Battery Saver on, and Private DNS set to Automatic, "
-                + "which stays encrypted when the network allows it and falls back to normal DNS on weak signal so you never lose internet. "
-                + "Turning it off restores your own Private DNS setting.");
+        small("Low signal mode keeps data flowing to the app you're using (YouTube, OTT, UPI…): background apps are paused from using data, "
+                + "the phone stays on LTE/3G instead of hunting for weak 5G, a weak Wi-Fi hands over to mobile data sooner, and "
+                + "Private DNS goes to Automatic so DNS never cuts you off. The app on screen (and PixelControls' ad filter) "
+                + "is kept online even in the background, and so are your UPI/banking apps. "
+                + "A DNS accelerator answers repeat lookups instantly, keeps apps working through brief dropouts and races "
+                + "DNS servers so a slow one never stalls you; ads and trackers are blocked so they don't eat the weak link. "
+                + "Turning it off restores all your previous settings exactly.");
         small("The daemon is started from a computer with: adb push start_daemon.sh /data/local/tmp/ && adb shell sh /data/local/tmp/start_daemon.sh");
 
         if (Build.VERSION.SDK_INT >= 33
@@ -201,7 +212,44 @@ public class MainActivity extends Activity {
         }
     }
 
+    /**
+     * Android's own verdict: a specific Private DNS server is set and the network fails Android's
+     * internet check. That's the "Private DNS server cannot be accessed" outage.
+     */
+    private boolean privateDnsBroken() {
+        try {
+            android.net.ConnectivityManager cm = getSystemService(android.net.ConnectivityManager.class);
+            android.net.Network n = cm.getActiveNetwork();   // PixelControls bypasses its own VPN: the real network
+            if (n == null) return false;
+            android.net.NetworkCapabilities nc = cm.getNetworkCapabilities(n);
+            android.net.LinkProperties lp = cm.getLinkProperties(n);
+            return lp != null && nc != null && lp.getPrivateDnsServerName() != null
+                    && nc.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                    && !nc.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_VALIDATED);
+        } catch (RuntimeException e) {
+            return false;
+        }
+    }
+
+    private void fixDns() {
+        new Thread(new Runnable() { public void run() {
+            final boolean ok = DaemonClient.sendOk("PRIVDNS_FIX");
+            main.post(new Runnable() { public void run() {
+                if (ok) {
+                    Toast.makeText(MainActivity.this, "Private DNS set to Automatic. Internet should return in a few seconds.", Toast.LENGTH_LONG).show();
+                } else {
+                    Toast.makeText(MainActivity.this, "Tap Private DNS → Automatic → Save", Toast.LENGTH_LONG).show();
+                    startActivity(new Intent(android.provider.Settings.ACTION_WIRELESS_SETTINGS));
+                }
+            } });
+        } }).start();
+    }
+
     private void refresh() {
+        boolean broken = privateDnsBroken();
+        doctor.setText("⚠ No internet: your Private DNS server can't be reached on this network, and Android won't fall back to normal DNS.");
+        doctor.setVisibility(broken ? View.VISIBLE : View.GONE);
+        doctorFix.setVisibility(broken ? View.VISIBLE : View.GONE);
         updating = true;
         boolean active = Adblock.isActive(this);
         boolean vpnMode = Adblock.MODE_VPN.equals(Adblock.mode(this));
@@ -437,14 +485,28 @@ public class MainActivity extends Activity {
     private void daemon(final String cmd, final boolean touchesDns) {
         new Thread(new Runnable() { public void run() {
             String reply;
+            boolean daemonOk;
             try {
                 reply = DaemonClient.send(cmd);
-                if (touchesDns) Adblock.reassertAfterDaemonChange(MainActivity.this);
+                daemonOk = reply.startsWith("OK:");
             } catch (IOException e) {
-                reply = "Helper daemon isn't running (start it with adb, see below).";
+                reply = null;
+                daemonOk = false;
             }
-            final String r = reply;
-            main.post(new Runnable() { public void run() { Toast.makeText(MainActivity.this, r, Toast.LENGTH_SHORT).show(); } });
+            Intent consent = null;
+            if ("ON".equals(cmd)) consent = LowSignal.onEnabled(MainActivity.this);
+            else if ("OFF".equals(cmd)) LowSignal.onDisabled(MainActivity.this);
+            final Intent ask = consent;
+            final String r = "ON".equals(cmd)
+                    ? (daemonOk ? "Low signal ON: the app on screen gets priority; DNS accelerator on"
+                                : "Helper daemon not running: only the DNS accelerator is on. Start the daemon for full Low signal mode.")
+                    : "OFF".equals(cmd) ? (daemonOk ? "Low signal OFF: your previous settings are back" : "Low signal OFF (daemon not running)")
+                    : (reply != null ? reply : "Helper daemon isn't running (start it with adb, see below).");
+            main.post(new Runnable() { public void run() {
+                Toast.makeText(MainActivity.this, r, Toast.LENGTH_LONG).show();
+                if (ask != null) startActivityForResult(ask, REQ_VPN);
+                refresh();
+            } });
             pollDaemon();
         } }).start();
     }
@@ -455,12 +517,21 @@ public class MainActivity extends Activity {
             try {
                 String s = DaemonClient.send("STATUS");
                 line = "Daemon running · " + s.replace("STATUS:", "").replace(':', ' ');
+                if (s.contains("low_signal=1")) {
+                    String kept = s.replaceAll(".*kept=(\\d+).*", "$1");
+                    line = "Low signal ON · the app you're using stays online (" + kept + " app(s) kept online in background)\n" + line;
+                }
                 if (s.contains("dns_fallback=1")) {
                     line += "\n⚠ AdGuard's secure DNS couldn't be reached on this network, so DNS was switched to "
                             + "Automatic to keep you online (Lite adblock is paused). On weak signal, use the Full filter instead; it works on any network.";
                 }
             } catch (IOException e) {
-                line = "Daemon not running. Low signal, DSLR colors and Lite adblock need it; the Full filter and Pro Enhance don't.";
+                line = "Daemon not running. Low signal and Lite adblock need it; the Full filter and DSLR don't.";
+            }
+            com.pixelcontrols.adblock.DnsFilterEngine eng = AdblockVpnService.currentEngine();
+            if (eng != null && (eng.cacheHits.get() > 0 || eng.staleServed.get() > 0)) {
+                line += String.format(Locale.US, "\nDNS accelerator: %,d lookups answered instantly from cache, %,d kept working through dropouts",
+                        eng.cacheHits.get(), eng.staleServed.get());
             }
             daemonLine = line;
         } }).start();

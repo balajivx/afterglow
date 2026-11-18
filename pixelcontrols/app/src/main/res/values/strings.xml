@@ -2,9 +2,9 @@
 <resources>
     <string name="app_name">PixelControls</string>
     <string name="tile_adblock">Adblock</string>
-    <string name="enhance_label">Pro Enhance</string>
+    <string name="enhance_label">DSLR</string>
     <string name="shortcut_adblock">Toggle Adblock</string>
     <string name="shortcut_adblock_long">Turn Adblock on or off</string>
-    <string name="shortcut_enhance">Pro Enhance a photo</string>
+    <string name="shortcut_enhance">DSLR photo</string>
     <string name="vpn_session">PixelControls Adblock</string>
 </resources>

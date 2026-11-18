@@ -14,10 +14,12 @@ import java.util.stream.IntStream;
  *   1. white balance (gray-world on neutral pixels + bright-neutral "white patch")
  *   2. exposure compensation in linear light
  *   3. black/white levels (haze removal / stretch)
- *   4. shadow lift and filmic highlight recovery
+ *   4. local shadow recovery (edge-aware dodging, no halos) and filmic highlight recovery
  *   5. scene-aware contrast curve
  *   6. vibrance with skin-tone protection
- *   7. clarity (midtone local contrast) and noise-aware sharpening
+ *   7. noise reduction (chroma speckle + luma grain, measured from the photo's flat areas)
+ *   8. clarity (midtone local contrast) and noise-aware sharpening
+ * Portraits are metered on the faces, the way a portrait photographer exposes.
  * Tone is applied to luminance and RGB is scaled by the same ratio, so hues don't shift.
  */
 public final class PhotoEnhancer {
@@ -37,6 +39,8 @@ public final class PhotoEnhancer {
         public float topLinear = 1;                     // linear p99.9 of the input (pre-exposure)
         public float shadows, highlights, contrast, vibrance, clarity, sharpen;
         public float noiseThreshold = 2f;
+        public float nrLuma, nrChroma;                  // estimated output noise sigma (8-bit units); 0 = off
+        public boolean faceMetered;
 
         public Params scaled(float s) {
             Params p = new Params();
@@ -55,12 +59,16 @@ public final class PhotoEnhancer {
             p.clarity = clarity * s;
             p.sharpen = sharpen * s;
             p.noiseThreshold = noiseThreshold;
+            p.nrLuma = nrLuma * s;
+            p.nrChroma = nrChroma * s;
+            p.faceMetered = faceMetered;
             return p;
         }
 
         public String describe() {
             StringBuilder sb = new StringBuilder(scene.label);
             if (Math.abs(ev) >= 0.1f) sb.append(String.format(Locale.US, " · Exposure %+.1f EV", ev));
+            if (faceMetered) sb.append(" (metered on face)");
             float warm = gainR / gainB;
             if (warm > 1.04f) sb.append(" · Warmer");
             else if (warm < 0.96f) sb.append(" · Cooler");
@@ -69,6 +77,7 @@ public final class PhotoEnhancer {
             if (highlights >= 0.05f) sb.append(String.format(Locale.US, " · Highlights −%d", Math.round(highlights * 100)));
             if (Math.abs(contrast) >= 0.03f) sb.append(String.format(Locale.US, " · Contrast %+d", Math.round(contrast * 100)));
             if (vibrance >= 0.05f) sb.append(String.format(Locale.US, " · Vibrance +%d", Math.round(vibrance * 100)));
+            if (nrLuma >= NR_LUMA_MIN || nrChroma >= NR_CHROMA_MIN) sb.append(" · Noise reduction");
             if (clarity >= 0.05f) sb.append(" · Clarity");
             if (sharpen >= 0.05f) sb.append(" · Sharpen");
             return sb.toString();
@@ -79,8 +88,10 @@ public final class PhotoEnhancer {
     private static final float[] LIN = new float[256];
     private static final int OUT_STEPS = 4096;
     private static final float[] OUT_GAMMA = new float[OUT_STEPS + 1];
+    private static final double[] LN = new double[256];
     static {
         for (int i = 0; i < 256; i++) LIN[i] = (float) toLinear(i / 255.0);
+        for (int i = 0; i < 256; i++) LN[i] = Math.log(LIN[i] + 1e-3);
         for (int i = 0; i <= OUT_STEPS; i++) OUT_GAMMA[i] = (float) toGamma(i / (double) OUT_STEPS);
     }
 
@@ -104,10 +115,18 @@ public final class PhotoEnhancer {
     }
 
     // ---------------------------------------------------------------- analysis
-    public static Params analyze(int[] px, int w, int h) { return analyze(px, w, h, false); }
+    static final float NR_LUMA_MIN = 3.5f, NR_CHROMA_MIN = 2.5f;
+    static double WB_W_GP = 0.5;                        // weight of the grey-pixel estimate
+    private static final int GRID = 24;                 // coarse luminance map for backlight detection
 
-    /** @param hasFaces true when a face detector found a prominent face (portrait mode). */
-    public static Params analyze(int[] px, int w, int h, boolean hasFaces) {
+    public static Params analyze(int[] px, int w, int h) { return analyze(px, w, h, null); }
+
+    /**
+     * @param faces face boxes from a face detector as {x, y, width, height, ...} in pixel
+     *              coordinates of px, or null. Faces switch on portrait mode and face metering.
+     */
+    public static Params analyze(int[] px, int w, int h, int[] faces) {
+        boolean hasFaces = faces != null && faces.length >= 4;
         int n = w * h;
         int step = Math.max(1, (int) Math.sqrt(n / 250_000.0));
         int[] hist = new int[256];
@@ -124,6 +143,15 @@ public final class PhotoEnhancer {
         double sumSat = 0;
         int[] lap = new int[256];
         int lapN = 0;
+        // grey pixels: greyness histogram with linear RGB sums per bin
+        final int GB = 200;
+        double[] gpR = new double[GB], gpG = new double[GB], gpB = new double[GB];
+        int[] gpN = new int[GB];
+        int gpTotal = 0;
+        // noise: mean |Laplacian| per grid cell (luma) and chroma Laplacian
+        double[] cellLap = new double[GRID * GRID], cellY = new double[GRID * GRID];
+        int[] cellLapN = new int[GRID * GRID], cellN = new int[GRID * GRID];
+        double[] cellChroma = new double[GRID * GRID];
 
         for (int y = 0; y < h; y += step) {
             boolean top = y < h / 3, bottom = y >= 2 * h / 3;
@@ -156,11 +184,34 @@ public final class PhotoEnhancer {
                 else if (Y > 40 && Y < 100) { darkRB += (r + 1.0) / (b + 1.0); darkN++; }
                 if (top && b > r + 10 && b >= g && Y > 110) sky++;
                 if (g > r + 8 && g > b + 8) foliage++;
+                int cell = Math.min(GRID - 1, y * GRID / h) * GRID + Math.min(GRID - 1, x * GRID / w);
+                cellY[cell] += 0.2126 * LIN[r] + 0.7152 * LIN[g] + 0.0722 * LIN[b];
+                cellN[cell]++;
                 if (x > 0 && y > 0 && x < w - 1 && y < h - 1) {
-                    int l = 4 * Y - luma(px[row + x - 1]) - luma(px[row + x + 1])
-                            - luma(px[row - w + x]) - luma(px[row + w + x]);
+                    int cl = px[row + x - 1], cr = px[row + x + 1], cu = px[row - w + x], cd = px[row + w + x];
+                    int l = 4 * Y - luma(cl) - luma(cr) - luma(cu) - luma(cd);
                     lap[Math.min(255, Math.abs(l))]++;
                     lapN++;
+                    cellLap[cell] += Math.abs(l);
+                    // chroma noise: Laplacian of (R - B)
+                    int k = 4 * (r - b) - (((cl >> 16) & 0xFF) - (cl & 0xFF)) - (((cr >> 16) & 0xFF) - (cr & 0xFF))
+                            - (((cu >> 16) & 0xFF) - (cu & 0xFF)) - (((cd >> 16) & 0xFF) - (cd & 0xFF));
+                    cellChroma[cell] += Math.abs(k);
+                    cellLapN[cell]++;
+                    // Grey pixels: on a neutral surface, light falls off identically in all three
+                    // channels, so the local contrast of log R, log G and log B is the same.
+                    if (mx < 250 && Y > 20) {
+                        double dR = Math.abs(4 * LN[r] - LN[(cl >> 16) & 0xFF] - LN[(cr >> 16) & 0xFF] - LN[(cu >> 16) & 0xFF] - LN[(cd >> 16) & 0xFF]);
+                        double dG = Math.abs(4 * LN[g] - LN[(cl >> 8) & 0xFF] - LN[(cr >> 8) & 0xFF] - LN[(cu >> 8) & 0xFF] - LN[(cd >> 8) & 0xFF]);
+                        double dB = Math.abs(4 * LN[b] - LN[cl & 0xFF] - LN[cr & 0xFF] - LN[cu & 0xFF] - LN[cd & 0xFF]);
+                        double m = (dR + dG + dB) / 3;
+                        if (m > 0.15 && maxc(cl) < 250 && maxc(cr) < 250 && maxc(cu) < 250 && maxc(cd) < 250) {
+                            double grey = (Math.abs(dR - m) + Math.abs(dG - m) + Math.abs(dB - m)) / (3 * m);
+                            int bin = (int) Math.min(GB - 1, grey * GB);
+                            gpR[bin] += LIN[r]; gpG[bin] += LIN[g]; gpB[bin] += LIN[b]; gpN[bin]++;
+                            gpTotal++;
+                        }
+                    }
                 }
             }
         }
@@ -176,11 +227,42 @@ public final class PhotoEnhancer {
 
         Params p = new Params();
 
+        // Coarse luminance map: a large dark region next to a large bright one = backlit subject.
+        int darkCells = 0, brightCells = 0, usedCells = 0;
+        for (int i = 0; i < GRID * GRID; i++) {
+            if (cellN[i] == 0) continue;
+            usedCells++;
+            double ly = cellY[i] / cellN[i];
+            if (ly < 0.045) darkCells++;
+            else if (ly > 0.40) brightCells++;
+        }
+        boolean splitLight = usedCells > 0 && darkCells >= usedCells * 0.20 && brightCells >= usedCells * 0.15;
+
+
+        // Noise from the flattest 10% of cells, so texture (fur, foliage) isn't mistaken for noise.
+        double[] flatLap = new double[GRID * GRID], flatChroma = new double[GRID * GRID];
+        int nc = 0;
+        for (int i = 0; i < GRID * GRID; i++) {
+            if (cellLapN[i] < 8) continue;
+            flatLap[nc] = cellLap[i] / cellLapN[i];
+            flatChroma[nc] = cellChroma[i] / cellLapN[i];
+            nc++;
+        }
+        double sigmaLuma = 0, sigmaChroma = 0;
+        if (nc > 0) {
+            java.util.Arrays.sort(flatLap, 0, nc);
+            java.util.Arrays.sort(flatChroma, 0, nc);
+            // mean |Laplacian| of Gaussian noise = 0.798 * sqrt(20) * sigma = 3.57 sigma
+            sigmaLuma = flatLap[nc / 10] / 3.57;
+            sigmaChroma = flatChroma[nc / 10] / (3.57 * 1.41);   // R-B doubles the variance
+        }
+
         // ---- scene classification
         boolean lightSources = p995 > 200 || clipped > 0.002f;
         boolean topBrighter = topN > 0 && botN > 0 && topY / topN > botY / botN + 15;
         if (p50 < 45 && lightSources) p.scene = Scene.NIGHT;
-        else if ((clipped > 0.015f || p995 >= 250) && darkFrac > 0.25f && p50 < 100) p.scene = Scene.BACKLIT;
+        else if (((clipped > 0.015f || p995 >= 250) && darkFrac > 0.25f && p50 < 100) || (splitLight && !hasFaces))
+            p.scene = Scene.BACKLIT;
         // Golden hour: warm light in the bright areas but NOT in the shadows (a white-balance
         // error tints everything equally) and a bright sky region on top.
         else if (brightN > count / 20 && bRB > 1.6 && (dRB < bRB * 0.75 || darkFrac > 0.3f) && topBrighter && meanSat > 0.3f)
@@ -199,6 +281,17 @@ public final class PhotoEnhancer {
                 double lr = 0.35 * lr1 + 0.65 * lr2, lb = 0.35 * lb1 + 0.65 * lb2;
                 // Confidence: if the estimators disagree, the scene's own colors are fooling them.
                 double disagree = Math.abs(lr1 - lr2) + Math.abs(lb1 - lb2);
+                // Grey pixels (greyest 2% by how evenly light falls off across channels) are the
+                // most reliable witness of the light's color, especially in very colorful scenes.
+                int need = Math.max(30, gpTotal / 50), got = 0;
+                double sR = 0, sG = 0, sB = 0;
+                for (int bin = 0; bin < GB && got < need; bin++) { sR += gpR[bin]; sG += gpG[bin]; sB += gpB[bin]; got += gpN[bin]; }
+                if (gpTotal >= 200 && got >= 30 && sR > 0 && sB > 0) {
+                    double lr3 = Math.log(sG / sR), lb3 = Math.log(sG / sB);
+                    lr = WB_W_GP * lr3 + (1 - WB_W_GP) * lr;
+                    lb = WB_W_GP * lb3 + (1 - WB_W_GP) * lb;
+                    disagree = Math.min(disagree, Math.abs(lr3 - lr2) + Math.abs(lb3 - lb2));
+                }
                 double conf = clamp(1.0 - (disagree - 0.08) / 0.30, 0.25, 1.0);
                 // Split into the temperature axis (amber <-> blue, where real lighting errors
                 // live: tungsten, shade, LEDs) and the tint axis (green <-> magenta, rarer, and
@@ -253,6 +346,29 @@ public final class PhotoEnhancer {
         }
         ev *= 0.85;
         if (Math.abs(ev) < 0.34) ev = 0;                       // within 1/3 stop: leave the photographer's choice
+        if (hasFaces) {
+            // Expose for the face (inner part of each box: skin, not hair or background).
+            double fSum = 0; int fN = 0;
+            for (int f = 0; f + 3 < faces.length; f += 4) {
+                int fx0 = faces[f] + faces[f + 2] / 5, fy0 = faces[f + 1] + faces[f + 3] / 5;
+                int fx1 = faces[f] + faces[f + 2] * 4 / 5, fy1 = faces[f + 1] + faces[f + 3] * 4 / 5;
+                int fs = Math.max(1, (fx1 - fx0) / 40);
+                for (int y = Math.max(0, fy0); y < Math.min(h, fy1); y += fs)
+                    for (int x = Math.max(0, fx0); x < Math.min(w, fx1); x += fs) {
+                        int c = px[y * w + x];
+                        fSum += 0.2126 * LIN[(c >> 16) & 0xFF] + 0.7152 * LIN[(c >> 8) & 0xFF] + 0.0722 * LIN[c & 0xFF];
+                        fN++;
+                    }
+            }
+            if (fN > 20) {
+                double faceLin = Math.max(1e-4, fSum / fN);
+                double evFace = log2(toLinear(0.60) / faceLin) * 0.85;   // skin around L* 65
+                evFace = clamp(evFace, -1.0, 1.8);
+                if (Math.abs(evFace) < 0.25) evFace = 0;
+                ev = evFace;
+                p.faceMetered = evFace != 0;
+            }
+        }
         p.ev = (float) ev;
         double gain = Math.pow(2, ev);
         p.topLinear = (float) toLinear(p999 / 255.0);
@@ -277,6 +393,8 @@ public final class PhotoEnhancer {
         float p25G = (float) toGamma(toLinear(p25 / 255.0) * gain);
         float sh = (float) clamp((0.30 - p25G) / 0.30, 0, 1) * 0.6f;
         if (p.scene == Scene.BACKLIT) sh = Math.min(0.9f, Math.max(sh, 0.5f) + 0.2f);
+        if (splitLight) sh = Math.max(sh, 0.8f);
+
         if (p.scene == Scene.NIGHT) sh *= 0.4f;
         p.shadows = sh;
         float hl = (float) clamp((brightFrac - clipped - 0.04) * 4, 0, 0.5);
@@ -334,6 +452,14 @@ public final class PhotoEnhancer {
         if (p.scene == Scene.NIGHT) shp *= 0.4f;
         p.sharpen = shp * (1 - 0.7f * noisy);
         p.noiseThreshold = (float) clamp(noise * 0.6, 1.5, 10);
+        // Noise grows with every stop of brightening and with the shadow lift.
+        double amp = Math.pow(2, Math.max(0, ev) / 2.2) * (1 + 0.6 * p.shadows);
+        double nl = sigmaLuma * amp, ncr = sigmaChroma * amp;
+        p.nrLuma = nl >= NR_LUMA_MIN ? (float) Math.min(nl, 25) : 0;
+        p.nrChroma = ncr >= NR_CHROMA_MIN ? (float) Math.min(ncr, 25) : 0;
+        if (System.getProperty("nrdebug") != null)
+            System.out.printf("   [nr] sigmaLuma=%.2f sigmaChroma=%.2f amp=%.2f -> nrLuma=%.2f nrChroma=%.2f sharpen=%.2f thr=%.1f%n",
+                    sigmaLuma, sigmaChroma, amp, p.nrLuma, p.nrChroma, p.sharpen, p.noiseThreshold);
         return p;
     }
 
@@ -392,10 +518,6 @@ public final class PhotoEnhancer {
         for (int i = 0; i <= TONE_STEPS; i++) {
             double x = i * (double) TONE_MAX / TONE_STEPS;
             double g = toGamma(x);
-            if (g < 1 && p.shadows > 0) {
-                double inv = 1 - g;
-                g += p.shadows * 2.0 * g * inv * inv * inv * inv;
-            }
             if (g > knee) {
                 double t = (g - knee) / (1 - knee);
                 if (tmax > 1) t = t * (1 + t / (tmax * tmax)) / (1 + t);   // fit pushed tones under white
@@ -427,6 +549,8 @@ public final class PhotoEnhancer {
         final float[][] ch = buildChannelLuts(p);
         final float[] LR = ch[0], LG = ch[1], LB = ch[2];
         final float vib = p.vibrance;
+        final LocalBase lb = p.shadows > 0.02f ? LocalBase.build(px, w, h, LR, LG, LB) : null;
+        final float lift = p.shadows;
 
         IntStream.range(0, h).parallel().forEach(new IntConsumer() { @Override public void accept(int y) {
             int row = y * w;
@@ -434,6 +558,16 @@ public final class PhotoEnhancer {
                 int c = px[row + x];
                 float r = LR[(c >> 16) & 0xFF], g = LG[(c >> 8) & 0xFF], b = LB[c & 0xFF];
                 float Y = 0.2126f * r + 0.7152f * g + 0.0722f * b;
+                if (lb != null) {
+                    // Dodge: brighten dark REGIONS by up to ~2 stops, following the edge-aware base
+                    // layer so a subject lifts as a whole and bright surroundings are untouched.
+                    float base = lb.base(x, y, Y);
+                    float d = PIVOT - base;
+                    if (d > 0) {
+                        float gain = (float) Math.pow(2, Math.min(2.2f, lift * 1.1f * d));
+                        r *= gain; g *= gain; b *= gain; Y *= gain;
+                    }
+                }
                 float Yo = lookup(tone, Y);
                 if (Y > 1e-6f) {
                     float k = Yo / Y;
@@ -463,7 +597,8 @@ public final class PhotoEnhancer {
             }
         } });
 
-        if (p.clarity > 0.01f || p.sharpen > 0.01f) detailPass(px, w, h, p);
+        if (p.clarity > 0.01f || p.sharpen > 0.01f || p.nrLuma >= NR_LUMA_MIN || p.nrChroma >= NR_CHROMA_MIN)
+            detailPass(px, w, h, p);
     }
 
     private static int to8(float v) {
@@ -473,10 +608,19 @@ public final class PhotoEnhancer {
 
     /** Clarity (large-radius, midtone-weighted local contrast) + noise-cored unsharp mask. */
     private static void detailPass(final int[] px, final int w, final int h, final Params p) {
-        final byte[] Y = new byte[w * h];
+        byte[] y0 = new byte[w * h];
+        final byte[] Y0 = y0;
         IntStream.range(0, h).parallel().forEach(new IntConsumer() { @Override public void accept(int y) {
-            for (int x = 0, i = y * w; x < w; x++, i++) Y[i] = (byte) luma(px[i]);
+            for (int x = 0, i = y * w; x < w; x++, i++) Y0[i] = (byte) luma(px[i]);
         } });
+        if (p.nrLuma >= NR_LUMA_MIN) {
+            y0 = denoiseLuma(px, y0, w, h, p.nrLuma);
+            // Heavy noise (typically a night shot we brightened): a second, gentler pass
+            // removes what the first left, at about 60% of the remaining noise level.
+            if (p.nrLuma >= 8f) y0 = denoiseLuma(px, y0, w, h, p.nrLuma * 0.6f);
+        }
+        if (p.nrChroma >= NR_CHROMA_MIN) denoiseChroma(px, w, h, p.nrChroma);
+        final byte[] Y = y0;
 
         // Low-res base layer for clarity: average-pool so the short side is ~200px, then blur.
         final int ds = Math.max(1, Math.min(w, h) / 200);
@@ -536,6 +680,150 @@ public final class PhotoEnhancer {
     }
 
     private static int clamp8(int v) { return v < 0 ? 0 : (v > 255 ? 255 : v); }
+
+    // ---------------------------------------------------------------- local tone mapping
+    private static final float PIVOT = (float) (Math.log(0.18) / Math.log(2));   // mid grey, in stops
+
+    /**
+     * Edge-aware base layer of log2 luminance (fast guided filter, He et al.): computed on a
+     * ~160 px proxy, then applied at full resolution as base = a * logY + b, which keeps sharp
+     * edges between a dark subject and a bright sky, so lifting the subject causes no halo.
+     */
+    static final class LocalBase {
+        final int ds, sw, sh;
+        final float[] A, B;
+
+        private LocalBase(int ds, int sw, int sh, float[] a, float[] b) { this.ds = ds; this.sw = sw; this.sh = sh; A = a; B = b; }
+
+        static LocalBase build(int[] px, int w, int h, float[] LR, float[] LG, float[] LB) {
+            int ds = Math.max(1, Math.min(w, h) / 160);
+            int sw = (w + ds - 1) / ds, sh = (h + ds - 1) / ds;
+            float[] I = new float[sw * sh];
+            for (int sy = 0; sy < sh; sy++)
+                for (int sx = 0; sx < sw; sx++) {
+                    double sum = 0; int n = 0;
+                    for (int y = sy * ds, ye = Math.min(h, y + ds); y < ye; y++)
+                        for (int x = sx * ds, xe = Math.min(w, x + ds); x < xe; x++) {
+                            int c = px[y * w + x];
+                            sum += 0.2126f * LR[(c >> 16) & 0xFF] + 0.7152f * LG[(c >> 8) & 0xFF] + 0.0722f * LB[c & 0xFF];
+                            n++;
+                        }
+                    I[sy * sw + sx] = log2f(sum / n);
+                }
+            int r = 4;
+            float eps = 0.12f;                     // edges stronger than ~1/3 stop are kept
+            float[] mI = I.clone(), mII = new float[I.length];
+            for (int i = 0; i < I.length; i++) mII[i] = I[i] * I[i];
+            boxBlur(mI, sw, sh, r);
+            boxBlur(mII, sw, sh, r);
+            float[] a = new float[I.length], b = new float[I.length];
+            for (int i = 0; i < I.length; i++) {
+                float var = Math.max(0, mII[i] - mI[i] * mI[i]);
+                a[i] = var / (var + eps);
+                b[i] = mI[i] - a[i] * mI[i];
+            }
+            boxBlur(a, sw, sh, r);
+            boxBlur(b, sw, sh, r);
+            return new LocalBase(ds, sw, sh, a, b);
+        }
+
+        float base(int x, int y, float lumLinear) {
+            float fx = Math.min(sw - 1f, Math.max(0f, (x + 0.5f) / ds - 0.5f));
+            float fy = Math.min(sh - 1f, Math.max(0f, (y + 0.5f) / ds - 0.5f));
+            int x0 = (int) fx, y0 = (int) fy, x1 = Math.min(sw - 1, x0 + 1), y1 = Math.min(sh - 1, y0 + 1);
+            float tx = fx - x0, ty = fy - y0;
+            float a = bil(A, x0, y0, x1, y1, tx, ty), b = bil(B, x0, y0, x1, y1, tx, ty);
+            return a * log2f(lumLinear) + b;
+        }
+
+        private float bil(float[] m, int x0, int y0, int x1, int y1, float tx, float ty) {
+            float t = m[y0 * sw + x0] + (m[y0 * sw + x1] - m[y0 * sw + x0]) * tx;
+            float u = m[y1 * sw + x0] + (m[y1 * sw + x1] - m[y1 * sw + x0]) * tx;
+            return t + (u - t) * ty;
+        }
+    }
+
+    private static float log2f(double v) { return (float) (Math.log(Math.max(v, 1e-4)) / 0.6931471805599453); }
+
+    // ---------------------------------------------------------------- noise reduction
+    /** Sigma filter: averages the 5x5 neighbours within 2.5 sigma, so edges and texture stay. */
+    private static byte[] denoiseLuma(final int[] px, final byte[] Y, final int w, final int h, float sigma) {
+        final byte[] out = new byte[w * h];
+        final int T = Math.round(2.5f * sigma);
+        IntStream.range(0, h).parallel().forEach(new IntConsumer() { @Override public void accept(int y) {
+            int y0 = Math.max(0, y - 2), y1 = Math.min(h - 1, y + 2);
+            for (int x = 0; x < w; x++) {
+                int i = y * w + x;
+                int c = Y[i] & 0xFF, sum = 0, n = 0;
+                int x0 = Math.max(0, x - 2), x1 = Math.min(w - 1, x + 2);
+                for (int yy = y0; yy <= y1; yy++) {
+                    int rowi = yy * w;
+                    for (int xx = x0; xx <= x1; xx++) {
+                        int v = Y[rowi + xx] & 0xFF;
+                        if (v - c <= T && c - v <= T) { sum += v; n++; }
+                    }
+                }
+                int d = (sum + n / 2) / n;
+                out[i] = (byte) d;
+                int delta = d - c;
+                if (delta != 0) {
+                    int p = px[i];
+                    px[i] = (p & 0xFF000000) | (clamp8(((p >> 16) & 0xFF) + delta) << 16)
+                            | (clamp8(((p >> 8) & 0xFF) + delta) << 8) | clamp8((p & 0xFF) + delta);
+                }
+            }
+        } });
+        return out;
+    }
+
+    /**
+     * Chroma speckle removal: colour (R-Y, B-Y) is smoothed at 1/4 resolution, but a pixel keeps
+     * its own colour wherever it differs from the smooth version by more than the noise level,
+     * which preserves real colour edges. Luma (and so detail) is unchanged.
+     */
+    private static void denoiseChroma(final int[] px, final int w, final int h, float sigma) {
+        final int ds = 4, sw = (w + ds - 1) / ds, sh = (h + ds - 1) / ds;
+        final float[] cr = new float[sw * sh], cb = new float[sw * sh];
+        for (int sy = 0; sy < sh; sy++)
+            for (int sx = 0; sx < sw; sx++) {
+                float a = 0, b = 0; int n = 0;
+                for (int y = sy * ds, ye = Math.min(h, y + ds); y < ye; y++)
+                    for (int x = sx * ds, xe = Math.min(w, x + ds); x < xe; x++) {
+                        int c = px[y * w + x];
+                        int L = luma(c);
+                        a += ((c >> 16) & 0xFF) - L; b += (c & 0xFF) - L; n++;
+                    }
+                cr[sy * sw + sx] = a / n; cb[sy * sw + sx] = b / n;
+            }
+        boxBlur(cr, sw, sh, 1);
+        boxBlur(cb, sw, sh, 1);
+        final float T = 3f * sigma;
+        IntStream.range(0, h).parallel().forEach(new IntConsumer() { @Override public void accept(int y) {
+            float fy = Math.min(sh - 1f, Math.max(0f, (y + 0.5f) / ds - 0.5f));
+            int y0 = (int) fy, y1 = Math.min(sh - 1, y0 + 1);
+            float ty = fy - y0;
+            for (int x = 0; x < w; x++) {
+                float fx = Math.min(sw - 1f, Math.max(0f, (x + 0.5f) / ds - 0.5f));
+                int x0 = (int) fx, x1 = Math.min(sw - 1, x0 + 1);
+                float tx = fx - x0;
+                float lr = lerp2(cr, sw, x0, y0, x1, y1, tx, ty), lbv = lerp2(cb, sw, x0, y0, x1, y1, tx, ty);
+                int i = y * w + x, c = px[i];
+                int L = luma(c), R = (c >> 16) & 0xFF, B = c & 0xFF;
+                float dr = (R - L) - lr, db = (B - L) - lbv;
+                float kr = Math.min(1f, Math.abs(dr) / T), kb = Math.min(1f, Math.abs(db) / T);
+                float nr = lr + dr * kr * kr, nb = lbv + db * kb * kb;
+                int R2 = clamp8(Math.round(L + nr)), B2 = clamp8(Math.round(L + nb));
+                int G2 = clamp8(Math.round((L * 256f - 54 * R2 - 19 * B2) / 183f));
+                px[i] = (c & 0xFF000000) | (R2 << 16) | (G2 << 8) | B2;
+            }
+        } });
+    }
+
+    private static float lerp2(float[] m, int sw, int x0, int y0, int x1, int y1, float tx, float ty) {
+        float t = m[y0 * sw + x0] + (m[y0 * sw + x1] - m[y0 * sw + x0]) * tx;
+        float u = m[y1 * sw + x0] + (m[y1 * sw + x1] - m[y1 * sw + x0]) * tx;
+        return t + (u - t) * ty;
+    }
 
     private static void boxBlur(float[] a, int w, int h, int r) {
         float[] tmp = new float[Math.max(w, h)];

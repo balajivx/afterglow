@@ -1,4 +1,4 @@
-# PixelControls 2.1
+# PixelControls 2.5
 
 Adblock (system-wide, with Quick Settings tile) + Pro Enhance for photos + your existing
 Low Signal / DSLR daemon controls.
@@ -51,25 +51,47 @@ Private DNS note: a specific Private DNS provider makes Android bypass any local
 Automatic through the daemon when needed and restores your original setting afterwards; without the daemon,
 set Settings → Network → Private DNS → Automatic.
 
-## Pro Enhance
-Google Photos → open a photo → Share → Pro Enhance (or Edit → ⋮ → Edit in… → Pro Enhance).
-It reads the scene (portrait via face detection, landscape, golden hour, low light, backlit) and corrects exposure
-(only when off by more than 1/3 stop), white balance (warm↔cool axis, gentle on colorful scenes), haze/levels,
-shadows and highlights, contrast, vibrance (skin protected), clarity and noise-aware sharpening.
+## DSLR (photo editor)
+The DSLR control now edits photos (it no longer changes display colors).
+- Just took a photo: swipe down → tap the **DSLR** tile. It opens your newest camera photo, picks the settings
+  for it and saves the edited copy automatically (first use asks for photo access). Add the tile once:
+  swipe down twice → pencil → drag "DSLR" up. A tile can't see which photo is open on screen, so it always
+  uses the latest one; for any other photo use the gallery options below.
+- Any photo, in any gallery (Google Photos, Samsung Gallery, Xiaomi Gallery, Files…): Share → DSLR,
+  Edit in → DSLR, or Open with → DSLR. Also: long-press the app icon → "DSLR photo".
+It reads the shot the way a photographer would and re-renders it as if taken with the right settings:
+- Exposure: corrected only when off by more than 1/3 stop; portraits are metered on the faces.
+- Backlit subjects: dark regions are lifted locally (edge-aware, no halo against the sky).
+- White balance: three estimators incl. grey pixels (neutral surfaces), corrected along warm↔cool.
+- Haze/levels, highlight recovery, contrast, vibrance (skin protected), clarity, sharpening.
+- Noise reduction: noise is measured from the flattest parts of the photo; colour speckle and grain are
+  removed in proportion, with a second pass for heavily brightened night shots. Clean photos are untouched.
 Hold the photo to compare; strength slider; "Save copy" writes Pictures/PixelControls/<name>_pro.jpg with the
-original's date, camera and GPS EXIF. The original is never modified.
-Limits: blown-out highlights, motion blur and missed focus can't be recovered.
+original's EXIF. The original is never modified.
+Limits: blown-out highlights, motion blur and missed focus can't be recovered; very textured night shots
+keep some grain.
 
-## Low signal mode (fixed in 2.1)
-Before: it forced strict Private DNS (one.one.one.one). On weak signal that encrypted DNS connection fails, Android
-never falls back, and the phone shows "Mobile network has no Internet access / Private DNS server cannot be accessed".
-Now: 4G/3G only, Data Saver + Battery Saver, and Private DNS = Automatic (encrypted when possible, normal DNS on weak
-signal). Turning it off restores your own Private DNS setting exactly.
-DNS watchdog: if the strict AdGuard DNS used by Lite adblock becomes unreachable while the internet works, the daemon
-switches to Automatic within ~1 minute and the app shows a warning. It never changes a strict DNS you set yourself.
-Tip: on weak networks prefer the Full filter adblock; it doesn't depend on encrypted DNS.
+## Low signal mode (2.5)
+Goal: the app on screen (YouTube, OTT, UPI, anything) keeps working smoothly on a weak network.
+- Background apps are paused from using data (Data Saver), so the app on screen gets the whole weak link.
+- The app on screen is kept online even in the background (music, downloads, picture-in-picture); so are
+  installed UPI/banking apps (payment confirmations) and PixelControls itself.
+- DNS accelerator (every connection starts with a DNS lookup, and lookups fail first on a lossy link):
+  - repeat lookups answered instantly on the phone (cache that respects each answer's lifetime);
+  - if the network can't answer in time, the last known good answer is used, so a working app keeps
+    connecting through short dropouts (RFC 8767 "serve-stale");
+  - carrier DNS, Cloudflare and Google are raced (backup after 0.6 s, resend lost queries after 1.5 s).
+    Measured on a simulated 30%-loss link: 54/60 lookups answered in 0.85 s on average, vs 46/60 in 2.9 s before.
+  - ads and trackers blocked so they don't compete for the weak link. Your previous adblock state is
+    restored on OFF. UPI/banking apps bypass the filter (they can't see the VPN).
+- LTE/3G/2G instead of hunting for weak 5G; mobile data stays ready; a weak Wi-Fi hands over sooner.
+- Private DNS = Automatic (encrypted when possible, normal DNS on weak signal; never "no Internet").
+- OFF restores every changed setting exactly. Network doctor shows "Fix now" if Private DNS ever cuts you off.
+Limits: without root no app can reserve bandwidth for one app or change the phone's TCP settings; what
+can't arrive over a very weak signal still can't. The DNS accelerator works even without the daemon;
+everything else needs it. **After updating, re-run start_daemon.sh from your Mac.**
 
-## Helper daemon (Low signal, DSLR colors, Lite adblock, Private DNS switching)
+## Helper daemon (Low signal, Lite adblock, Private DNS switching)
 adb push start_daemon.sh /data/local/tmp/ && adb shell sh /data/local/tmp/start_daemon.sh
 Re-run after each reboot. Safe to re-run: it now stops the previous listener first.
 New commands: ADBLOCK_DNS_ON/OFF, PRIVDNS_AUTO/RESTORE (backs up and exactly restores your Private DNS).

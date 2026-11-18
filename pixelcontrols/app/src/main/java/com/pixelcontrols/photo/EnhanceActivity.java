@@ -39,12 +39,15 @@ import java.io.InputStream;
 import java.io.OutputStream;
 
 /**
- * "Pro Enhance": open any photo from Google Photos (Share → Pro Enhance, or Edit → Edit in…)
+ * "DSLR": open any photo from Google Photos (Share → DSLR, or Edit → Edit in… → DSLR)
  * and get a copy rendered as if it had been shot with the right settings. The original is
  * never modified; the result is saved to Pictures/PixelControls with the original's EXIF.
  */
 public class EnhanceActivity extends Activity {
-    private static final int REQ_PICK = 1;
+    private static final int REQ_PICK = 1, REQ_PERM = 2;
+    /** Set by the DSLR tile: open the newest camera photo and save the edit automatically. */
+    public static final String EXTRA_LATEST = "latest";
+    private boolean autoSave;
     private static final int PREVIEW_MAX = 1600;
     private static final long MAX_PIXELS = 16_000_000L;   // ~16 MP keeps memory sane on 50 MP shots
 
@@ -69,6 +72,11 @@ public class EnhanceActivity extends Activity {
     protected void onCreate(Bundle state) {
         super.onCreate(state);
         buildUi();
+        if (getIntent().getBooleanExtra(EXTRA_LATEST, false)) {
+            autoSave = true;
+            openLatest();
+            return;
+        }
         source = sourceUri(getIntent());
         if (source == null) {
             Intent pick = new Intent(Intent.ACTION_GET_CONTENT).setType("image/*").addCategory(Intent.CATEGORY_OPENABLE);
@@ -76,6 +84,69 @@ public class EnhanceActivity extends Activity {
         } else {
             load();
         }
+    }
+
+    // ------------------------------------------------------------------ latest photo (tile)
+    private String readPermission() {
+        return Build.VERSION.SDK_INT >= 33 ? android.Manifest.permission.READ_MEDIA_IMAGES
+                : android.Manifest.permission.READ_EXTERNAL_STORAGE;
+    }
+
+    private boolean canReadPhotos() {
+        if (checkSelfPermission(readPermission()) == android.content.pm.PackageManager.PERMISSION_GRANTED) return true;
+        // Android 14+: "Allow limited access" still lets us read the photos the user picked.
+        return Build.VERSION.SDK_INT >= 34 && checkSelfPermission("android.permission.READ_MEDIA_VISUAL_USER_SELECTED")
+                == android.content.pm.PackageManager.PERMISSION_GRANTED;
+    }
+
+    private void openLatest() {
+        if (!canReadPhotos()) {
+            status.setText("DSLR needs access to your photos to edit the one you just took.");
+            if (Build.VERSION.SDK_INT >= 34)
+                requestPermissions(new String[]{readPermission(), "android.permission.READ_MEDIA_VISUAL_USER_SELECTED"}, REQ_PERM);
+            else
+                requestPermissions(new String[]{readPermission()}, REQ_PERM);
+            return;
+        }
+        source = latestPhoto();
+        if (source == null) {
+            fail("No photos found. Take a photo first, or share one to DSLR from your gallery.");
+            return;
+        }
+        load();
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] results) {
+        super.onRequestPermissionsResult(requestCode, permissions, results);
+        if (requestCode != REQ_PERM) return;
+        if (canReadPhotos()) {
+            openLatest();
+        } else {
+            Toast.makeText(this, "Without photo access, pick the photo yourself", Toast.LENGTH_LONG).show();
+            autoSave = false;
+            Intent pick = new Intent(Intent.ACTION_GET_CONTENT).setType("image/*").addCategory(Intent.CATEGORY_OPENABLE);
+            startActivityForResult(Intent.createChooser(pick, "Choose a photo"), REQ_PICK);
+        }
+    }
+
+    /** Newest camera photo; otherwise the newest photo that isn't a screenshot or one of our edits. */
+    private Uri latestPhoto() {
+        Uri coll = MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL);
+        String[] proj = {MediaStore.Images.Media._ID};
+        String notOurs = MediaStore.Images.Media.RELATIVE_PATH + " NOT LIKE 'Pictures/PixelControls%' AND "
+                + MediaStore.Images.Media.RELATIVE_PATH + " NOT LIKE '%Screenshots%'";
+        String[] selections = {
+                MediaStore.Images.Media.RELATIVE_PATH + " LIKE 'DCIM/%' AND " + notOurs,
+                notOurs,
+        };
+        for (String sel : selections) {
+            try (Cursor c = getContentResolver().query(coll, proj, sel, null,
+                    MediaStore.Images.Media.DATE_ADDED + " DESC")) {
+                if (c != null && c.moveToFirst()) return android.content.ContentUris.withAppendedId(coll, c.getLong(0));
+            } catch (RuntimeException ignored) { }
+        }
+        return null;
     }
 
     @SuppressWarnings("deprecation")
@@ -202,7 +273,7 @@ public class EnhanceActivity extends Activity {
 
                 // Face check on a small copy; analysis on the full-resolution pixels (it samples
                 // sparsely, so it's fast, and noise/sharpening are judged at true pixel level).
-                boolean faces = hasProminentFace(bmp);
+                int[] faces = faceRects(bmp);
                 int w = bmp.getWidth(), h = bmp.getHeight();
                 int[] all = new int[w * h];
                 bmp.getPixels(all, 0, w, 0, 0, w, h);
@@ -224,6 +295,10 @@ public class EnhanceActivity extends Activity {
                     save.setEnabled(true);
                     share.setEnabled(true);
                     renderPreview();
+                    if (autoSave) {           // from the tile: save the edit right away
+                        autoSave = false;
+                        saveAsync(false);
+                    }
                 } });
             } catch (OutOfMemoryError e) {
                 fail("This photo is too large to process.");
@@ -269,26 +344,40 @@ public class EnhanceActivity extends Activity {
         return r;
     }
 
-    /** Portrait mode only when a face is a meaningful part of the frame. */
-    private static boolean hasProminentFace(Bitmap src) {
+    /**
+     * Face boxes {x, y, w, h, ...} in src pixel coordinates for faces that are a meaningful part
+     * of the frame (portrait mode + face metering), or null when there are none.
+     */
+    private static int[] faceRects(Bitmap src) {
         try {
             int w = 640 & ~1;
-            int h = Math.max(2, Math.round(src.getHeight() * (w / (float) src.getWidth()))) & ~1;
+            float scale = w / (float) src.getWidth();
+            int h = Math.max(2, Math.round(src.getHeight() * scale)) & ~1;
             Bitmap scaled = Bitmap.createScaledBitmap(src, w, h, true);
             Bitmap rgb565 = scaled.copy(Bitmap.Config.RGB_565, false);
             if (scaled != src) scaled.recycle();
             FaceDetector.Face[] faces = new FaceDetector.Face[4];
             int n = new FaceDetector(w, h, faces.length).findFaces(rgb565, faces);
             rgb565.recycle();
+            int[] out = new int[n * 4];
+            int k = 0;
             PointF mid = new PointF();
             for (int i = 0; i < n; i++) {
                 FaceDetector.Face f = faces[i];
-                if (f == null) continue;
+                if (f == null || f.confidence() < 0.4f || f.eyesDistance() < 0.05f * Math.min(w, h)) continue;
                 f.getMidPoint(mid);
-                if (f.confidence() >= 0.4f && f.eyesDistance() >= 0.05f * Math.min(w, h)) return true;
+                float e = f.eyesDistance();
+                // A face is roughly 2.2 eye-distances wide and 2.8 tall, centred a bit below the eyes.
+                float fw = 2.2f * e, fh = 2.8f * e;
+                out[k++] = Math.round((mid.x - fw / 2) / scale);
+                out[k++] = Math.round((mid.y - fh * 0.4f) / scale);
+                out[k++] = Math.round(fw / scale);
+                out[k++] = Math.round(fh / scale);
             }
-        } catch (RuntimeException ignored) { }
-        return false;
+            return k == 0 ? null : java.util.Arrays.copyOf(out, k);
+        } catch (RuntimeException e) {
+            return null;
+        }
     }
 
     // ------------------------------------------------------------------ preview
@@ -350,6 +439,7 @@ public class EnhanceActivity extends Activity {
                     showParams();
                     if (thenShare) shareUri(done);
                     else Toast.makeText(EnhanceActivity.this, "Saved to Pictures/PixelControls", Toast.LENGTH_SHORT).show();
+                    if (!thenShare) status.setText("Saved ✓  Settings chosen for this photo: " + params.scaled(s).describe());
                 }
             } });
         } }, "enhance-save").start();
@@ -407,7 +497,7 @@ public class EnhanceActivity extends Activity {
                 if (val != null) dst.setAttribute(tag, val);
             }
             dst.setAttribute(ExifInterface.TAG_ORIENTATION, String.valueOf(ExifInterface.ORIENTATION_NORMAL));
-            dst.setAttribute(ExifInterface.TAG_SOFTWARE, "PixelControls Pro Enhance");
+            dst.setAttribute(ExifInterface.TAG_SOFTWARE, "PixelControls DSLR");
             dst.saveAttributes();
         } catch (Exception ignored) {
             // Metadata is nice-to-have; the photo itself is already written.

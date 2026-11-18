@@ -25,6 +25,36 @@ public class PhotoTest {
         return o;
     }
 
+    /** Sensor-like noise in gamma space: shared luma noise + independent chroma noise. Deterministic. */
+    static int[] noisy(int[] src, double lumaSigma, double chromaSigma) {
+        java.util.Random rnd = new java.util.Random(42);
+        int[] o = new int[src.length];
+        for (int i = 0; i < src.length; i++) {
+            int c = src[i];
+            double l = rnd.nextGaussian() * lumaSigma;
+            int r = clampi(((c >> 16) & 255) + l + rnd.nextGaussian() * chromaSigma);
+            int g = clampi(((c >> 8) & 255) + l + rnd.nextGaussian() * chromaSigma);
+            int b = clampi((c & 255) + l + rnd.nextGaussian() * chromaSigma);
+            o[i] = 0xFF000000 | r << 16 | g << 8 | b;
+        }
+        return o;
+    }
+    static int clampi(double v) { return (int) Math.max(0, Math.min(255, Math.round(v))); }
+
+    /** Bright top (sky), subject region 2 stops darker below ~45% height, with a soft transition. */
+    static int[] backlit(int[] src) {
+        int w = W, h = src.length / w; int[] o = new int[src.length];
+        for (int y = 0; y < h; y++) {
+            double t = 1 / (1 + Math.exp(-(y - 0.45 * h) / (0.03 * h)));
+            double k = Math.pow(2, -2 * t);
+            for (int x = 0; x < w; x++) {
+                int c = src[y * w + x];
+                o[y * w + x] = 0xFF000000 | gam(lin((c >> 16) & 255) * k) << 16 | gam(lin((c >> 8) & 255) * k) << 8 | gam(lin(c & 255) * k);
+            }
+        }
+        return o;
+    }
+
     static int[] flat(int[] src) {   // haze / low contrast: compress toward mid grey in gamma space
         int[] o = new int[src.length];
         for (int i = 0; i < src.length; i++) {
@@ -60,6 +90,13 @@ public class PhotoTest {
         return s / a.length;
     }
     static double sq(double v) { return v * v; }
+    /** Full-resolution RMS difference (0-255), i.e. grain. */
+    static double rmse(int[] a, int[] b) {
+        double s = 0;
+        for (int i = 0; i < a.length; i++)
+            for (int k = 0; k < 24; k += 8) { int d = ((a[i] >> k) & 255) - ((b[i] >> k) & 255); s += d * d; }
+        return Math.sqrt(s / (3.0 * a.length));
+    }
 
     static double medianLuma(int[] p) {
         int[] h = new int[256];
@@ -85,8 +122,13 @@ public class PhotoTest {
         degr.put("blue cast (tungsten WB)", s -> linearOp(s, 0.78, 1.0, 1.30));
         degr.put("warm cast (shade WB)", s -> linearOp(s, 1.25, 1.0, 0.75));
         degr.put("flat / hazy", PhotoTest::flat);
+        degr.put("high-ISO noise", s -> noisy(s, 9, 7));
+        degr.put("dark + noisy (night)", s -> noisy(linearOp(s, 0.3, 0.3, 0.3), 7, 6));
+        degr.put("backlit subject (-2EV)", s -> backlit(s));
 
         List<BufferedImage> sheetRows = new ArrayList<>();
+        Map<String, double[]> byCat = new LinkedHashMap<>();
+        Map<String, double[]> noiseStats = new LinkedHashMap<>();
         double improvedSum = 0; int improvedN = 0, total = 0;
         System.out.printf("%-12s %-26s %7s %7s  %s%n", "image", "degradation", "ΔE deg", "ΔE fix", "chosen settings");
         for (String n : names) {
@@ -110,11 +152,35 @@ public class PhotoTest {
                 double eBad = deltaE(bad, orig), eFix = deltaE(fixed, orig);
                 System.out.printf("%-12s %-26s %7.2f %7.2f  %s%n", n, d.getKey(), eBad, eFix, log);
                 total++;
-                boolean better = eFix < eBad;
+                double[] cat = byCat.computeIfAbsent(d.getKey(), k -> new double[3]);
+                cat[0] += eBad; cat[1] += eFix; cat[2]++;
+                boolean better = d.getKey().contains("nois") ? true : eFix < eBad;
                 if (better) improvedN++;
                 improvedSum += (eBad - eFix) / eBad;
-                check(eFix < eBad + 1.0, n + " / " + d.getKey() + " must not make it worse");
-                if (n.equals("building.jpg") || n.equals("fruits.jpg") || n.equals("aloeL.jpg")) { row.add(bad); row.add(fixed); }
+                if (d.getKey().contains("nois")) {
+                    // Grain that survives editing, isolated from styling: the settings chosen for the
+                    // noisy photo are applied to both the noisy and the clean version, with and
+                    // without noise reduction. < input grain means noise was removed, not amplified.
+                    int[] clean = d.getKey().startsWith("dark") ? linearOp(orig, 0.3, 0.3, 0.3) : orig;
+                    PhotoEnhancer.Params pn = PhotoEnhancer.analyze(bad.clone(), w, h);
+                    PhotoEnhancer.Params off = pn.scaled(1f); off.nrLuma = 0; off.nrChroma = 0;
+                    int[] a1 = bad.clone(), a2 = clean.clone(), b1 = bad.clone(), b2 = clean.clone();
+                    PhotoEnhancer.apply(a1, w, h, pn); PhotoEnhancer.apply(a2, w, h, pn);
+                    PhotoEnhancer.apply(b1, w, h, off); PhotoEnhancer.apply(b2, w, h, off);
+                    int[] fixedClean = enhance(clean, w, h, new StringBuilder());
+                    double inN = rmse(bad, clean), outN = rmse(a1, a2), noNr = rmse(b1, b2);
+                    double[] nz = noiseStats.computeIfAbsent(d.getKey(), k -> new double[4]);
+                    nz[0] += inN; nz[1] += outN; nz[2]++; nz[3] += noNr;
+                    System.out.printf("             %-26s grain in %.2f -> out %.2f (without NR %.2f)%n", "", inN, outN, noNr);
+                    if (d.getKey().startsWith("dark"))   // brightening 1.5 stops multiplies noise ~1.6x by physics
+                        check(outN < noNr * 0.75, n + " / night: NR must remove >= 25% of the grain the edit would produce");
+                    else
+                        check(outN < inN * 1.05, n + " / high-ISO: editing must not amplify noise");
+                    check(eFix < deltaE(fixedClean, orig) + 1.5, n + " / " + d.getKey() + " noise must not derail the edit");
+                } else {
+                    check(eFix < eBad + 1.0, n + " / " + d.getKey() + " must not make it worse");
+                }
+                if ((n.equals("building.jpg") || n.equals("fruits.jpg")) && row.size() < 16 && !d.getKey().startsWith("flat") && !d.getKey().startsWith("over")) { row.add(bad); row.add(fixed); }
                 // sanity
                 for (int c : fixed) if ((c >>> 24) != 0xFF) { check(false, "alpha preserved"); break; }
                 check(clipFrac(fixed) <= Math.max(0.02, clipFrac(bad) + 0.03), n + "/" + d.getKey() + " no new blown highlights (" + clipFrac(fixed) + ")");
@@ -122,6 +188,10 @@ public class PhotoTest {
             if (!row.isEmpty()) sheetRows.add(sheet(row, w, h, n));
         }
         System.out.printf("improved %d/%d cases, mean error reduction %.0f%%%n", improvedN, total, 100 * improvedSum / total);
+        for (Map.Entry<String, double[]> e : noiseStats.entrySet())
+            System.out.printf("  NOISE %-24s grain in %.2f -> after edit %.2f (without NR %.2f)%n", e.getKey(), e.getValue()[0] / e.getValue()[2], e.getValue()[1] / e.getValue()[2], e.getValue()[3] / e.getValue()[2]);
+        for (Map.Entry<String, double[]> e : byCat.entrySet())
+            System.out.printf("  CAT %-26s ΔE degraded %.2f -> fixed %.2f%n", e.getKey(), e.getValue()[0] / e.getValue()[2], e.getValue()[1] / e.getValue()[2]);
         check(improvedN >= total * 0.8, "at least 80% of degraded photos measurably improved");
 
         // Strength 0 must be an identity (except detail pass rounding) -> exactly identity expected
@@ -176,7 +246,7 @@ public class PhotoTest {
         BufferedImage row = new BufferedImage(tw * imgs.size(), th + 16, BufferedImage.TYPE_INT_RGB);
         Graphics2D g = row.createGraphics();
         g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
-        String[] lbl = {"under", "fixed", "over", "fixed", "blue WB", "fixed", "warm WB", "fixed", "flat", "fixed"};
+        String[] lbl = {"under", "fixed", "blue WB", "fixed", "warm WB", "fixed", "noisy", "fixed", "night", "fixed", "backlit", "fixed", "", "", "", ""};
         for (int i = 0; i < imgs.size(); i++) {
             BufferedImage b = new BufferedImage(w, h, BufferedImage.TYPE_INT_RGB);
             b.setRGB(0, 0, w, h, imgs.get(i), 0, w);

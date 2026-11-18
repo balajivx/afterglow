@@ -60,6 +60,7 @@ public class AdblockVpnService extends VpnService {
     private final Object writeLock = new Object();
     private final Handler main = new Handler(Looper.getMainLooper());
     private ExecutorService pool;
+    private HedgedResolver resolver;
     private volatile ParcelFileDescriptor tun;
     private volatile FileDescriptor tunFd;
     private volatile boolean running;
@@ -95,7 +96,20 @@ public class AdblockVpnService extends VpnService {
     public void onCreate() {
         super.onCreate();
         instance = this;
-        pool = Executors.newFixedThreadPool(6);
+        // Lookups can wait several seconds on a weak link: enough threads that one slow lookup
+        // never queues behind another.
+        pool = Executors.newFixedThreadPool(16);
+        resolver = new HedgedResolver(new HedgedResolver.SocketFactory() {
+            @Override public DatagramSocket create() throws IOException {
+                DatagramSocket s = new DatagramSocket();
+                protect(s);
+                Network n = upstreamNet;
+                if (n != null) {
+                    try { n.bindSocket(s); } catch (IOException ignored) { }
+                }
+                return s;
+            }
+        });
         NotificationManager nm = getSystemService(NotificationManager.class);
         NotificationChannel ch = new NotificationChannel(CHANNEL, "Adblock", NotificationManager.IMPORTANCE_LOW);
         ch.setShowBadge(false);
@@ -216,33 +230,14 @@ public class AdblockVpnService extends VpnService {
 
     // ------------------------------------------------------------------ upstream DNS
     private byte[] resolveUpstream(byte[] query) throws IOException {
-        List<InetAddress> servers = upstreamServers();
-        IOException last = null;
-        // Weak 2G/3G links can take several seconds per round trip: give the network's own DNS
-        // server the most time, then try the public fallbacks a little faster.
-        int attempt = 0;
-        for (InetAddress srv : servers) {
-            int timeoutMs = attempt++ == 0 ? 5000 : 3500;
-            try (DatagramSocket s = new DatagramSocket()) {
-                protect(s);
-                Network n = upstreamNet;
-                if (n != null) {
-                    try { n.bindSocket(s); } catch (IOException ignored) { }
-                }
-                s.setSoTimeout(timeoutMs);
-                s.send(new DatagramPacket(query, query.length, srv, 53));
-                byte[] buf = new byte[4096];
-                DatagramPacket r = new DatagramPacket(buf, buf.length);
-                s.receive(r);
-                if (r.getLength() >= 12 && buf[0] == query[0] && buf[1] == query[1]) {
-                    return Arrays.copyOf(buf, r.getLength());
-                }
-            } catch (IOException e) {
-                last = e;
-                upstreamAt = 0;   // network may have changed: re-read servers next time
-            }
+        List<InetSocketAddress> servers = new ArrayList<>();
+        for (InetAddress a : upstreamServers()) servers.add(new InetSocketAddress(a, 53));
+        try {
+            return resolver.resolve(query, servers);
+        } catch (IOException e) {
+            upstreamAt = 0;   // network may have changed: re-read servers next time
+            throw e;
         }
-        throw last != null ? last : new IOException("no DNS servers");
     }
 
     private List<InetAddress> upstreamServers() {

@@ -1,0 +1,7 @@
+# Machine-specific and build output
+local.properties
+.gradle/
+build/
+app/build/
+*.apk
+*.keystore

@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:enabled="true"
+        android:icon="@drawable/ic_shield"
+        android:shortcutId="toggle_adblock"
+        android:shortcutLongLabel="@string/shortcut_adblock_long"
+        android:shortcutShortLabel="@string/shortcut_adblock">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetClass="com.pixelcontrols.adblock.ToggleAdblockActivity"
+            android:targetPackage="com.pixelcontrols" />
+    </shortcut>
+    <shortcut
+        android:enabled="true"
+        android:icon="@drawable/ic_enhance"
+        android:shortcutId="pro_enhance"
+        android:shortcutShortLabel="@string/shortcut_enhance">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetClass="com.pixelcontrols.photo.EnhanceActivity"
+            android:targetPackage="com.pixelcontrols" />
+    </shortcut>
+</shortcuts>

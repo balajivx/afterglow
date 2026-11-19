@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Sports on the wrist: India cricket, Arsenal and Formula 1 (Ferrari first). An app with the full picture,
+     and a watch-face widget (complication) with the one thing that matters now. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-feature android:name="android.hardware.type.watch" />
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <application
+        android:icon="@drawable/icon"
+        android:label="Sports"
+        android:theme="@android:style/Theme.DeviceDefault">
+        <meta-data android:name="com.google.android.wearable.standalone" android:value="true" />
+
+        <activity android:name=".MainActivity" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <activity android:name=".DetailActivity" android:exported="false" />
+
+        <service
+            android:name=".NextUpComplication"
+            android:exported="true"
+            android:icon="@drawable/icon"
+            android:label="Sports: live and next"
+            android:permission="com.google.android.wearable.permission.BIND_COMPLICATION_PROVIDER">
+            <intent-filter>
+                <action android:name="android.support.wearable.complications.ACTION_COMPLICATION_UPDATE_REQUEST" />
+            </intent-filter>
+            <meta-data android:name="android.support.wearable.complications.SUPPORTED_TYPES" android:value="LONG_TEXT,SHORT_TEXT" />
+            <!-- Every 15 minutes (1 Nov: 5 cost battery; the app loads fresh when opened) -->
+            <meta-data android:name="android.support.wearable.complications.UPDATE_PERIOD_SECONDS" android:value="900" />
+        </service>
+
+        <service
+            android:name=".FplDeadlineComplication"
+            android:exported="true"
+            android:icon="@drawable/icon"
+            android:label="FPL: Next Deadline"
+            android:permission="com.google.android.wearable.permission.BIND_COMPLICATION_PROVIDER">
+            <intent-filter>
+                <action android:name="android.support.wearable.complications.ACTION_COMPLICATION_UPDATE_REQUEST" />
+            </intent-filter>
+            <meta-data android:name="android.support.wearable.complications.SUPPORTED_TYPES" android:value="SHORT_TEXT,RANGED_VALUE" />
+            <!-- FPL deadline is weekly: update local countdown string every 6 hours; network only queries when deadline passes -->
+            <meta-data android:name="android.support.wearable.complications.UPDATE_PERIOD_SECONDS" android:value="21600" />
+        </service>
+    </application>
+</manifest>

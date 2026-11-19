@@ -1,0 +1,25 @@
+plugins { id "com.android.application" }
+
+android {
+    namespace "com.balaji.watchsports"
+    compileSdk 34
+    defaultConfig {
+        applicationId "com.balaji.watchsports"
+        minSdk 30
+        targetSdk 34
+        versionCode 9
+        versionName "1.1"
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+dependencies {
+    // The watch-face widget (complication) API: the one AndroidX library this app uses.
+    implementation "androidx.wear.watchface:watchface-complications-data-source:1.2.1"
+
+    testImplementation "junit:junit:4.13.2"
+    testImplementation "org.json:json:20231013"
+}

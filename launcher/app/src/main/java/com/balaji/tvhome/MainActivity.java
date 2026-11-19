@@ -793,8 +793,12 @@ public class MainActivity extends Activity {
         final boolean online = online(), first = match == null && race == null;
         final long now = System.currentTimeMillis();
         final long over = 2 * 3600 * 1000L;
-        final boolean finished = (match != null && match.start + over < now) || (race != null && race.start + over < now)
-                || (cricket != null && cricket.start + Sports.cricketLength(cricket.competition) < now);
+        // Only consider a match/race "finished" if the shown event is truly over and we've moved on.
+        // For cricket (especially Tests): don't treat it as finished just because the notional length
+        // elapsed while it's still the current match; re-fetch only when the *next* fixture differs.
+        final boolean finished = (match != null && match.start + over < now)
+                || (race != null && race.start + over < now)
+                || (cricket != null && !cricket.live && cricket.start + Sports.cricketLength(cricket.competition) < now);
         final int crestPx = Ui.dpi(this, 72f);
         weatherIo.execute(() -> {
             org.json.JSONObject data = first ? sportsSource.cached() : null;
@@ -813,16 +817,26 @@ public class MainActivity extends Activity {
     }
 
     private void postSports(org.json.JSONObject data, int crestPx, boolean online) {
-        Sports.Match m = Sports.match(data, "match", Sports.ARSENAL_ID);
+        final Sports.Match m = Sports.match(data, "match", Sports.ARSENAL_ID);
         Sports.Match c = Sports.match(data, "cricket", Sports.INDIA_ID);
-        Sports.Race r = Sports.race(data);
+        final Sports.Race r = Sports.race(data);
+        // Check ESPN for a live India match — TheSportsDB's free key has no live score and often
+        // lists the series' next fixture while the real match is in play. If ESPN says India is live,
+        // override the cricket tile with that live match instead of the next fixture.
+        if (online) {
+            Sports.Match live = Sports.cricketLive(true);
+            if (live != null) {
+                c = live;
+            }
+        }
+        final Sports.Match fc = c; // effectively final for lambda
         Bitmap home = m == null ? null : sportsSource.badge(m.homeBadge, m.homeBadgeUrl, crestPx, online);
         Bitmap away = m == null ? null : sportsSource.badge(m.awayBadge, m.awayBadgeUrl, crestPx, online);
-        Bitmap cHome = c == null ? null : sportsSource.badge(c.homeBadge, c.homeBadgeUrl, crestPx, online);
-        Bitmap cAway = c == null ? null : sportsSource.badge(c.awayBadge, c.awayBadgeUrl, crestPx, online);
+        Bitmap cHome = fc == null ? null : sportsSource.badge(fc.homeBadge, fc.homeBadgeUrl, crestPx, online);
+        Bitmap cAway = fc == null ? null : sportsSource.badge(fc.awayBadge, fc.awayBadgeUrl, crestPx, online);
         handler.post(() -> {
             match = m;
-            cricket = c;
+            cricket = fc;
             race = r;
             homeCrest = home;
             awayCrest = away;
@@ -831,10 +845,20 @@ public class MainActivity extends Activity {
             long now = System.currentTimeMillis();
             showSports(now);
             if (!sports.flipped) {
-                // Show whichever comes first (or is on now), until the viewer flips it themselves.
-                long[] starts = {m == null ? Long.MAX_VALUE : m.start, c == null ? Long.MAX_VALUE : c.start, r == null ? Long.MAX_VALUE : r.start};
+                // Prefer a live face over upcoming ones (mirrors the watch's headline() fix).
+                // If multiple are live, pick the one that started earliest.
+                // For F1, "live" means the race has started (countdown shows "Live").
+                boolean rLive = r != null && r.start <= now;
+                long[] starts = {m == null ? Long.MAX_VALUE : m.start, fc == null ? Long.MAX_VALUE : fc.start, r == null ? Long.MAX_VALUE : r.start};
+                boolean[] live = {m != null && m.live, fc != null && fc.live, rLive};
                 int best = 0;
-                for (int k = 1; k < 3; k++) if (starts[k] < starts[best]) best = k;
+                for (int k = 1; k < 3; k++) {
+                    if (live[k] && !live[best]) {
+                        best = k;
+                    } else if (live[k] == live[best] && starts[k] < starts[best]) {
+                        best = k;
+                    }
+                }
                 sports.show(best);
             }
         });

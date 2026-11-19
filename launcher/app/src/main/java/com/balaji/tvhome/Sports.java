@@ -50,12 +50,19 @@ final class Sports {
     static final String ARSENAL_ID = "133604", INDIA_ID = "137143";
     static final long EVERY_MS = 3 * 3600 * 1000L;
     private static final long HOUR = 3600 * 1000L;
+    /** ESPN's cricket scoreboard: the one that says when an India match is actually in play. */
+    static final String ESPN_CRICKET =
+            "https://site.api.espn.com/apis/personalized/v2/scoreboard/header?sport=cricket&region=in&lang=en";
 
     /** A fixture between two teams (football or cricket). */
     static final class Match {
         String home, away, competition, homeBadge, awayBadge, homeBadgeUrl, awayBadgeUrl;
         boolean ourHome;
         long start;
+        /** True when this is the match that is in play right now (ESPN says so; TheSportsDB can't). */
+        boolean live;
+        /** The live score line, e.g. "NZ 124/5 (44.5 ov)" — only set when [live]. */
+        String score;
     }
 
     static final class Race {
@@ -247,6 +254,57 @@ final class Sports {
         if (c.contains("one day")) return "ODI";
         if (c.contains("twenty20") || c.contains("t20")) return c.contains("world cup") ? "T20 WORLD CUP" : "T20I";
         return competition.toUpperCase(Locale.UK);
+    }
+
+    /**
+     * The India match that is in play right now, if ESPN says so. TheSportsDB's free key has no live score
+     * at all — it keeps the finished match as "next" for hours and lists the *series'* next fixture as the
+     * India event — so without this the card shows a Test starting a week away while the real one is on.
+     * [online] gates the network call: offline, the last thing stands.
+     */
+    static Match cricketLive(boolean online) {
+        if (!online) return null;
+        try {
+            JSONArray leagues = new JSONObject(Net.getString(ESPN_CRICKET))
+                    .getJSONArray("sports").getJSONObject(0).getJSONArray("leagues");
+            for (int i = 0; i < leagues.length(); i++) {
+                JSONArray events = leagues.optJSONObject(i).optJSONArray("events");
+                for (int j = 0; events != null && j < events.length(); j++) {
+                    JSONObject e = events.getJSONObject(j);
+                    JSONArray cs = e.optJSONArray("competitors");
+                    if (cs == null) continue;
+                    boolean india = false;
+                    StringBuilder scores = new StringBuilder();
+                    for (int k = 0; k < cs.length(); k++) {
+                        JSONObject c = cs.getJSONObject(k);
+                        String name = c.optString("displayName");
+                        if (name.equals("India") || name.startsWith("India ")) india = true;
+                        String s = c.optString("score");
+                        if (!s.isEmpty()) {
+                            if (scores.length() > 0) scores.append("  ·  ");
+                            scores.append(c.optString("abbreviation", name)).append(' ').append(s);
+                        }
+                    }
+                    if (!india || !"in".equals(e.optString("status"))) continue;
+                    Match m = new Match();
+                    m.home = csLength(cs, 0);
+                    m.away = csLength(cs, 1);
+                    m.ourHome = "India".equals(m.home) || m.home.startsWith("India ");
+                    m.competition = leagues.optJSONObject(i).optString("name");
+                    m.start = parseUtc(e.optString("date").replace("+00:00", "").replace("Z", ""));
+                    m.live = true;
+                    m.score = scores.length() > 0 ? scores.toString() : e.optString("summary");
+                    return m.start > 0 ? m : null;
+                }
+            }
+        } catch (Exception ignored) {
+            // Offline or ESPN hiccuped: the next fixture stays shown.
+        }
+        return null;
+    }
+
+    private static String csLength(JSONArray cs, int i) {
+        return i < cs.length() ? cs.optJSONObject(i).optString("displayName") : "";
     }
 
     // ---- The card
@@ -549,12 +607,18 @@ final class Sports {
                 String side = m.ourHome ? "HOME" : "AWAY";
                 if (cricket) {
                     label = cricketFormat(m.competition) + " · " + side;
-                    pill = countdown(m.start, now, cricketLength(m.competition));
+                    if (m.live) {
+                        pill = "LIVE";
+                        main = m.score != null ? m.score : "On now";
+                    } else {
+                        pill = countdown(m.start, now, cricketLength(m.competition));
+                        main = (m.ourHome ? m.away : m.home).replaceAll(" (Town|FC|AFC)$", "");
+                    }
                 } else {
                     label = m.competition.replace("English ", "").replace("UEFA ", "").toUpperCase(Locale.UK) + " · " + side;
                     pill = countdown(m.start, now, 2 * HOUR);
+                    main = (m.ourHome ? m.away : m.home).replaceAll(" (Town|FC|AFC)$", "");
                 }
-                main = (m.ourHome ? m.away : m.home).replaceAll(" (Town|FC|AFC)$", "");
                 when = when(m.start);
             }
             setContentDescription((cricket ? "India: " : "Arsenal: ") + label + ", " + main + ", " + when + " " + pill);

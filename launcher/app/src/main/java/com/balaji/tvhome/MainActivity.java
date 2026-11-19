@@ -805,11 +805,12 @@ public class MainActivity extends Activity {
             if (data != null) postSports(data, crestPx, false);
             boolean stale = sportsSource.age(now) >= Sports.EVERY_MS || finished || (first && data == null)
                     || (data != null && !data.has("cricket")); // a cache from before the cricket face
-            if (stale && online) {
+            if (online) {
                 try {
-                    postSports(sportsSource.fetch(), crestPx, true);
+                    org.json.JSONObject fresh = stale ? sportsSource.fetch() : (data != null ? data : sportsSource.cached());
+                    if (fresh != null) postSports(fresh, crestPx, true);
                 } catch (IOException ignored) {
-                    // Keep what's shown; the next check tries again.
+                    if (data != null) postSports(data, crestPx, true);
                 }
             }
             handler.post(() -> sportsBusy = false);
@@ -823,11 +824,9 @@ public class MainActivity extends Activity {
         // Check ESPN for a live India match — TheSportsDB's free key has no live score and often
         // lists the series' next fixture while the real match is in play. If ESPN says India is live,
         // override the cricket tile with that live match instead of the next fixture.
-        if (online) {
-            Sports.Match live = Sports.cricketLive(true);
-            if (live != null) {
-                c = live;
-            }
+        Sports.Match liveCricket = Sports.cricketLive(online);
+        if (liveCricket != null) {
+            c = liveCricket;
         }
         final Sports.Match fc = c; // effectively final for lambda
         Bitmap home = m == null ? null : sportsSource.badge(m.homeBadge, m.homeBadgeUrl, crestPx, online);

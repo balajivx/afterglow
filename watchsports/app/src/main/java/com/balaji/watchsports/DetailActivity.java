@@ -21,6 +21,7 @@ public class DetailActivity extends Activity {
     private final Handler main = new Handler(Looper.getMainLooper());
     private final Runnable reload = this::load;
     private LinearLayout list;
+    private ScrollView scroll;
     private int sport, color;
     private String ref;
     private boolean live;
@@ -38,8 +39,9 @@ public class DetailActivity extends Activity {
         ref = in.getStringExtra(REF);
         live = in.getBooleanExtra(LIVE, false);
         color = sport == Feed.F1 ? MainActivity.YELLOW : MainActivity.RED;
-        ScrollView scroll = new ScrollView(this);
+        scroll = new ScrollView(this);
         scroll.setBackgroundColor(0xFF000000);
+        scroll.setVerticalScrollBarEnabled(false);
         list = new LinearLayout(this);
         list.setOrientation(LinearLayout.VERTICAL);
         int side = MainActivity.dp(this, 26);
@@ -48,6 +50,11 @@ public class DetailActivity extends Activity {
         setContentView(scroll);
         header();
         list.addView(MainActivity.text(this, "Loading…", 14, MainActivity.DIM, false, Gravity.CENTER));
+    }
+
+    @Override
+    public boolean dispatchGenericMotionEvent(android.view.MotionEvent e) {
+        return MainActivity.crown(this, scroll, e) || super.dispatchGenericMotionEvent(e);
     }
 
     @Override

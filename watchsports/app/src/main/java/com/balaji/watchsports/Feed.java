@@ -66,9 +66,24 @@ final class Feed {
      * null for none) stands in, up to 12 hours old, without fixtures that have since started.
      */
     static List<Item> load(java.io.File cache, boolean includeOther) {
+        return load(cache, includeOther, null);
+    }
+
+    /**
+     * As [load(File, boolean)], but only the sports in [only] go online (null: all); the rest come from [cache]
+     * while it holds them (a live Test needn't re-fetch Arsenal and F1 every 15 minutes).
+     */
+    static List<Item> load(java.io.File cache, boolean includeOther, java.util.Set<Integer> only) {
         List<Item> out = new ArrayList<>();
         int[] sports = includeOther ? new int[]{CRICKET, FOOTBALL, F1, OTHER} : new int[]{CRICKET, FOOTBALL, F1};
         for (int sport : sports) {
+            if (only != null && !only.contains(sport) && cache != null) {
+                List<Item> kept = restore(new java.io.File(cache, "sport" + sport + ".json"));
+                if (kept != null) {
+                    out.addAll(kept);
+                    continue;
+                }
+            }
             List<Item> got = null;
             for (int attempt = 0; attempt < 2 && got == null; attempt++) {
                 try {
@@ -113,15 +128,25 @@ final class Feed {
 
     /** When the soonest upcoming event the widget cares about starts (ms), or 0 for none. */
     static long nextStart(List<Item> all, long now) {
-        long next = 0;
+        Item i = nextItem(all, now);
+        return i == null ? 0 : startOf(i);
+    }
+
+    /** The item whose start is soonest (see [nextStart]), or null. */
+    static Item nextItem(List<Item> all, long now) {
+        Item next = null;
         for (Item i : all) {
             if (i.sport == OTHER) continue;
             if (i.sport == CRICKET && !i.senior) continue;
-            if (!i.past && !i.live && i.time > now - 2 * 3600_000L && (next == 0 || i.time < next)) next = i.time;
             // At stumps the next day's start counts as an upcoming start (the widget checks in around it).
-            if (i.live && i.resume > now - 2 * 3600_000L && (next == 0 || i.resume < next)) next = i.resume;
+            boolean upcoming = (!i.past && !i.live) || (i.live && i.resume > 0);
+            if (upcoming && startOf(i) > now - 2 * 3600_000L && (next == null || startOf(i) < startOf(next))) next = i;
         }
         return next;
+    }
+
+    private static long startOf(Item i) {
+        return i.live ? i.resume : i.time;
     }
 
     private static void save(java.io.File f, List<Item> items) {

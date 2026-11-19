@@ -5,6 +5,10 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 
 import androidx.wear.watchface.complications.data.ComplicationData;
+import androidx.wear.watchface.complications.data.ComplicationText;
+import androidx.wear.watchface.complications.data.CountDownTimeReference;
+import androidx.wear.watchface.complications.data.TimeDifferenceComplicationText;
+import androidx.wear.watchface.complications.data.TimeDifferenceStyle;
 import androidx.wear.watchface.complications.data.ComplicationType;
 import androidx.wear.watchface.complications.data.LongTextComplicationData;
 import androidx.wear.watchface.complications.data.PlainComplicationText;
@@ -35,17 +39,33 @@ public class NextUpComplication extends ComplicationDataSourceService {
             long now = System.currentTimeMillis();
             SharedPreferences when = getSharedPreferences("fetch", MODE_PRIVATE);
             long next = when.getLong("next", 0);
-            boolean online = now - when.getLong("at", 0) > 3 * 3600_000L || when.getBoolean("live", false)
-                    || (next > 0 && now > next - 20 * 60_000L);
-            List<Feed.Item> all = online ? Feed.load(getCacheDir()) : Feed.cached(getCacheDir());
+            boolean due = now - when.getLong("at", 0) > 3 * 3600_000L;
+            boolean live = when.getBoolean("live", false);
+            boolean near = next > 0 && now > next - 20 * 60_000L;
+            // The app has just loaded everything (and asked for this update): its answers are in the cache.
+            boolean fresh = now - when.getLong("appAt", 0) < 5 * 60_000L;
+            boolean online = !fresh && (due || live || near);
+            // Between the 3-hourly full checks, only the sport that is live or about to start goes online.
+            java.util.Set<Integer> only = null;
+            if (online && !due) {
+                only = new java.util.HashSet<>();
+                if (live) only.add(when.getInt("liveSport", Feed.CRICKET));
+                if (near) only.add(when.getInt("nextSport", Feed.CRICKET));
+            }
+            List<Feed.Item> all = online ? Feed.load(getCacheDir(), false, only) : Feed.cached(getCacheDir());
             Feed.Item h = Feed.headline(all, now);
             if (online || h != null) {
-                when.edit().putLong("at", online ? now : when.getLong("at", 0)).putLong("next", Feed.nextStart(all, now))
-                        .putBoolean("live", h != null && h.live && h.resume == 0).apply(); // stumps: see Feed.nextStart
+                Feed.Item n = Feed.nextItem(all, now);
+                when.edit().putLong("at", online && only == null ? now : when.getLong("at", 0))
+                        .putLong("next", Feed.nextStart(all, now)).putInt("nextSport", n == null ? Feed.CRICKET : n.sport)
+                        .putBoolean("live", h != null && h.live && h.resume == 0) // stumps: see Feed.nextStart
+                        .putInt("liveSport", h == null ? Feed.CRICKET : h.sport).apply();
             }
             String[] parts;
             if (h != null) {
-                parts = new String[]{label(h), h.head, h.body, h.shortTitle, h.shortText};
+                // The last part: when it starts, for a countdown the watch keeps ticking by itself (0: none).
+                long start = h.past ? 0 : h.live ? h.resume : h.time;
+                parts = new String[]{label(h), h.head, h.body, h.shortTitle, h.shortText, String.valueOf(start)};
                 cache.edit().putString("t", String.join("\n", parts)).apply();
             } else {
                 String saved = cache.getString("t", null);
@@ -74,8 +94,12 @@ public class NextUpComplication extends ComplicationDataSourceService {
         PendingIntent open = PendingIntent.getActivity(this, 0,
                 new Intent(this, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK), PendingIntent.FLAG_IMMUTABLE);
         PlainComplicationText desc = text(p[1] + ", " + p[2]);
+        long start = p.length > 5 ? parseLong(p[5]) : 0;
+        long now = System.currentTimeMillis();
+        boolean countdown = start > now && start - now < 24 * 3600_000L; // further off, the day and time read better
         if (type == ComplicationType.SHORT_TEXT) {
-            return new ShortTextComplicationData.Builder(text(p[4]), desc).setTitle(text(p[3])).setTapAction(open).build();
+            ComplicationText t = countdown ? countdown(start, null) : text(p[4]);
+            return new ShortTextComplicationData.Builder(t, desc).setTitle(text(p[3])).setTapAction(open).build();
         }
         if (type == ComplicationType.LONG_TEXT) {
             // One line on the face: "ARS vs Hull · 20:30" (today goes without saying), "Tmrw 01:30".
@@ -85,15 +109,37 @@ public class NextUpComplication extends ComplicationDataSourceService {
                 head = head.replace("Hull City", "Hull").replace(" v ", " vs ");
             }
             String body = when.isEmpty() ? head : head + "  ·  " + when;
+            ComplicationText line = null;
+            // Coming up today: "ARS vs Newcastle United  ·  in 2h 14m", counted down by the watch every minute
+            // without waking this app (no battery cost). At stumps: "STUMPS  ·  NZ 243/5  ·  play in 5h 10m".
+            if (countdown && !"STUMPS".equals(p[0])) line = countdown(start, head + "  ·  in ^1");
             // Live cricket: just the scores, without the overs ("LIVE · NZ 134 · IND 40/3"), so it fits one line.
             if (("LIVE".equals(p[0]) || "STUMPS".equals(p[0])) && p[2].matches(".*\\d.*")) {
                 body = p[0] + "  ·  " + p[2].replaceAll("\\s*\\([^)]*\\)", "");
+                if (countdown && "STUMPS".equals(p[0])) line = countdown(start, body + "  ·  play in ^1");
             } else if ("LIVE".equals(p[0]) && p[1].contains("Arsenal")) {
                 body = head + "  ·  LIVE";
             }
-            return new LongTextComplicationData.Builder(text(body), desc).setTitle(text(p[0])).setTapAction(open).build();
+            return new LongTextComplicationData.Builder(line != null ? line : text(body), desc).setTitle(text(p[0])).setTapAction(open).build();
         }
         return null;
+    }
+
+    /** "2h 14m" (or [template] with ^1 in its place) to [start], kept current by the watch itself. */
+    private static ComplicationText countdown(long start, String template) {
+        TimeDifferenceComplicationText.Builder b = new TimeDifferenceComplicationText.Builder(
+                TimeDifferenceStyle.SHORT_DUAL_UNIT, new CountDownTimeReference(java.time.Instant.ofEpochMilli(start)))
+                .setMinimumTimeUnit(java.util.concurrent.TimeUnit.MINUTES);
+        if (template != null) b.setText(template);
+        return b.build();
+    }
+
+    private static long parseLong(String s) {
+        try {
+            return Long.parseLong(s);
+        } catch (Exception e) {
+            return 0;
+        }
     }
 
     private static PlainComplicationText text(String s) {

@@ -44,3 +44,9 @@ start + N days − 30 min): the widget shows "STUMPS" and checks every 3 h until
 `testStumpsSnapshot` against a saved scoreboard response.
 Installed on the watch 2026-11-19 22:14 (it had been on the 12 Nov v8 until then). Pairing: Wireless debugging →
 Pair new device, `adb pair <ip:pairport> <code>`, connect port from `adb mdns services`. Turn debugging off after.
+v10 (2026-11-19, 1.2): the app opens on a hero card (the widget's pick: team badges, the score or a live
+countdown big, "Play resumes in" at stumps); the crown scrolls; the time sits at the top. The widget's
+upcoming line is a TimeDifferenceComplicationText ("in 2h 14m", "play in 3h 51m" at stumps) that the watch
+counts down itself (no wake-ups). Battery: opening the app marks the cache fresh (`appAt`), so the widget no
+longer re-fetches everything straight after; between the 3-hourly full checks only the live/next sport goes
+online (`Feed.load(cache, false, only)`), the rest from cache. Installed 23:07 and checked on the watch.

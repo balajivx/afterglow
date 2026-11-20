@@ -1,0 +1,239 @@
+<title>Gunners x Scuderia Redesigns</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Inter:wght@400;500;600&display=swap">
+<style>
+/* Layout: a dark pit-wall board. Each direction is one row: its name, three round faces (Arsenal, Ferrari, space days),
+   then what it borrows, what changes and what it costs. Single dark look on purpose: faces are judged on black. */
+:root {
+  --bg: #0b0c0f;
+  --panel: #14161b;
+  --line: #262a33;
+  --fg: #eef0f4;
+  --muted: #9aa1ad;
+  --red: #e1061b;
+  --yellow: #ffd600;
+  --display: "Barlow Condensed", "Arial Narrow", "Helvetica Neue", sans-serif;
+  --body: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.55 var(--body);
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 28px 56px;
+}
+main { max-width: 1040px; margin: 0 auto; display: grid; gap: 44px; }
+header { display: grid; gap: 10px; }
+.eyebrow { font: 600 13px/1 var(--display); letter-spacing: .18em; text-transform: uppercase; color: var(--yellow); }
+h1 { font: 700 clamp(34px, 6vw, 56px)/1 var(--display); letter-spacing: .01em; margin: 0; text-wrap: balance; }
+h1 span { color: var(--red); }
+.lede { color: var(--muted); max-width: 64ch; margin: 0; }
+.keeps { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.keeps span { font: 600 12px/1 var(--display); letter-spacing: .08em; text-transform: uppercase; color: var(--fg);
+  border: 1px solid var(--line); border-radius: 999px; padding: 6px 10px; }
+.today { display: flex; gap: 20px; align-items: center; flex-wrap: wrap; border-top: 1px solid var(--line); padding-top: 22px; }
+.today img { width: 150px; height: 150px; border-radius: 50%; }
+.today p { margin: 0; color: var(--muted); max-width: 52ch; min-width: 0; flex: 1 1 260px; }
+.today strong { color: var(--fg); }
+section.concept { display: grid; gap: 16px; border-top: 1px solid var(--line); padding-top: 26px; }
+.head { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
+.num { font: 700 44px/1 var(--display); color: var(--red); font-variant-numeric: tabular-nums; }
+h2 { font: 700 34px/1 var(--display); margin: 0; letter-spacing: .02em; text-transform: uppercase; }
+.tag { color: var(--muted); font-size: 15px; }
+.faces { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+figure { margin: 0; display: grid; gap: 8px; justify-items: center; }
+figure img { width: 100%; max-width: 300px; aspect-ratio: 1; border-radius: 50%; display: block;
+  box-shadow: 0 0 0 6px #050608, 0 0 0 7px var(--line); }
+figcaption { font: 600 12px/1 var(--display); letter-spacing: .14em; text-transform: uppercase; color: var(--muted); }
+.notes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+.note { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; min-width: 0; }
+.note h3 { margin: 0 0 6px; font: 600 13px/1.2 var(--display); letter-spacing: .14em; text-transform: uppercase; color: var(--yellow); }
+.note p { margin: 0; color: var(--fg); font-size: 14px; }
+.note .cost { color: var(--muted); }
+footer { border-top: 1px solid var(--line); padding-top: 22px; color: var(--muted); max-width: 70ch; }
+section.round { display: grid; gap: 10px; border-top: 2px solid var(--red); padding-top: 22px; }
+.roundh { font: 700 clamp(28px, 5vw, 42px)/1 var(--display); margin: 0; text-transform: uppercase; letter-spacing: .02em; }
+footer strong { color: var(--fg); }
+@media (max-width: 720px) {
+  .notes { grid-template-columns: 1fr; }
+  .faces { gap: 8px; }
+  figure img { box-shadow: 0 0 0 3px #050608, 0 0 0 4px var(--line); }
+}
+</style>
+
+<main>
+  <header>
+    <div class="eyebrow">OnePlus Watch 3 · face redesign</div>
+    <h1>Gunners <span>x</span> Scuderia, four new directions</h1>
+    <p class="lede">Same face, same data, new looks. Each direction borrows one idea from today's best watch faces and is shown on an Arsenal, a Ferrari and a space day, with the real readings from 20 November: the Test at stumps, 63 bpm, 73% battery, FPL deadline in 1 day 8 hours.</p>
+    <div class="keeps" aria-label="Kept in every direction">
+      <span>Time</span><span>Weekday + date</span><span>Battery</span><span>Heart rate</span><span>FPL countdown</span><span>Steps</span><span>Calories</span><span>Sports line + icon + rail</span><span>Daily + monthly photos</span>
+    </div>
+  </header>
+
+  <section class="round">
+    <div class="eyebrow">Round 3 · simpler, same caption bar</div>
+    <h2 class="roundh">Broadcast, stripped back</h2>
+    <p class="lede">Round 1's TV caption bar, kept exactly. Everything else is reduced to at most four things: the time, the date, one quiet line of stats, and the caption bar. Upright type, no gauges, no extra tags.</p>
+  </section>
+
+  <section class="concept">
+    <div class="head"><span class="num">1</span><h2>Clean Feed</h2><span class="tag">The time centred, the stats in one row</span></div>
+    <div class="faces">
+      <figure><img src="img/clean-feed-arsenal.png" alt="Clean Feed on an Arsenal day"><figcaption>Arsenal day</figcaption></figure>
+      <figure><img src="img/clean-feed-ferrari.png" alt="Clean Feed on a Ferrari day"><figcaption>Ferrari day</figcaption></figure>
+      <figure><img src="img/clean-feed-space.png" alt="Clean Feed on a space day"><figcaption>Space day</figcaption></figure>
+    </div>
+  </section>
+
+  <section class="concept">
+    <div class="head"><span class="num">2</span><h2>Left Hand</h2><span class="tag">Round 1's layout, with the clutter taken out</span></div>
+    <div class="faces">
+      <figure><img src="img/left-hand-arsenal.png" alt="Left Hand on an Arsenal day"><figcaption>Arsenal day</figcaption></figure>
+      <figure><img src="img/left-hand-ferrari.png" alt="Left Hand on a Ferrari day"><figcaption>Ferrari day</figcaption></figure>
+      <figure><img src="img/left-hand-space.png" alt="Left Hand on a space day"><figcaption>Space day</figcaption></figure>
+    </div>
+  </section>
+
+  <section class="concept">
+    <div class="head"><span class="num">3</span><h2>Quiet</h2><span class="tag">A smaller time up top; the photo carries the face</span></div>
+    <div class="faces">
+      <figure><img src="img/quiet-arsenal.png" alt="Quiet on an Arsenal day"><figcaption>Arsenal day</figcaption></figure>
+      <figure><img src="img/quiet-ferrari.png" alt="Quiet on a Ferrari day"><figcaption>Ferrari day</figcaption></figure>
+      <figure><img src="img/quiet-space.png" alt="Quiet on a space day"><figcaption>Space day</figcaption></figure>
+    </div>
+  </section>
+
+  <section class="round">
+    <div class="eyebrow">Round 2 · you picked Broadcast</div>
+    <h2 class="roundh">Broadcast, four ways</h2>
+    <p class="lede">More from the motorsport and football broadcast world: F1's timing tower and onboard graphics, TAG Heuer's race-weekend faces, Sky Sports and Premier League score bugs, and the crisp type of Apple's 2026 F1 coverage. Motorsport italics throughout.</p>
+  </section>
+
+  <section class="concept">
+    <div class="head"><span class="num">A</span><h2>Race Control</h2><span class="tag">The Broadcast you liked, refined</span></div>
+    <div class="faces">
+      <figure><img src="img/race-control-arsenal.png" alt="Race Control on an Arsenal day"><figcaption>Arsenal day</figcaption></figure>
+      <figure><img src="img/race-control-ferrari.png" alt="Race Control on a Ferrari day"><figcaption>Ferrari day</figcaption></figure>
+      <figure><img src="img/race-control-space.png" alt="Race Control on a space day"><figcaption>Space day</figcaption></figure>
+    </div>
+    <div class="notes">
+      <div class="note"><h3>Borrowed from</h3><p>F1 TV graphics and Apple's 2026 F1 coverage: slanted italics, a red graphics tag for the date, a lap counter ("DAY 324/366").</p></div>
+      <div class="note"><h3>What changes</h3><p>Heart rate and battery become two chips at the top. Steps, calories and FPL become segmented energy-store bars. The caption gets a second tier: "LIVE · TEST · DAY 2/5" above the score.</p></div>
+      <div class="note"><h3>On the watch</h3><p class="cost">Bars light segment by segment, the same technique as the step lights. Battery: same as today.</p></div>
+    </div>
+  </section>
+
+  <section class="concept">
+    <div class="head"><span class="num">B</span><h2>Timing Tower</h2><span class="tag">Your day as F1's leaderboard</span></div>
+    <div class="faces">
+      <figure><img src="img/timing-tower-arsenal.png" alt="Timing Tower on an Arsenal day"><figcaption>Arsenal day</figcaption></figure>
+      <figure><img src="img/timing-tower-ferrari.png" alt="Timing Tower on a Ferrari day"><figcaption>Ferrari day</figcaption></figure>
+      <figure><img src="img/timing-tower-space.png" alt="Timing Tower on a space day"><figcaption>Space day</figcaption></figure>
+    </div>
+    <div class="notes">
+      <div class="note"><h3>Borrowed from</h3><p>The timing tower down the side of every F1 broadcast: position number, team-colour chip, three-letter code, gap.</p></div>
+      <div class="note"><h3>What changes</h3><p>Steps, calories, heart rate, battery and FPL become five rows of the tower under a header ("FRI 20 NOV · D324"). The time stacks big on the left, hour over minute.</p></div>
+      <div class="note"><h3>On the watch</h3><p class="cost">Text and small solid shapes only: the cheapest to draw of the four. Battery: same or slightly lower (dark panel).</p></div>
+    </div>
+  </section>
+
+  <section class="concept">
+    <div class="head"><span class="num">C</span><h2>Onboard</h2><span class="tag">The in-car view: shift lights and a readout</span></div>
+    <div class="faces">
+      <figure><img src="img/onboard-arsenal.png" alt="Onboard on an Arsenal day"><figcaption>Arsenal day</figcaption></figure>
+      <figure><img src="img/onboard-ferrari.png" alt="Onboard on a Ferrari day"><figcaption>Ferrari day</figcaption></figure>
+      <figure><img src="img/onboard-space.png" alt="Onboard on a space day"><figcaption>Space day</figcaption></figure>
+    </div>
+    <div class="notes">
+      <div class="note"><h3>Borrowed from</h3><p>F1 onboard graphics and the steering wheel: shift lights from green to red to purple, a speed readout, gear boxes.</p></div>
+      <div class="note"><h3>What changes</h3><p>Your step lights become a real F1 shift-light arc that fills towards your goal. The time is the readout, heart rate and battery sit in gear-style boxes, and calories and FPL are delta chips.</p></div>
+      <div class="note"><h3>On the watch</h3><p class="cost">The face already has step lights; these are recoloured and reshaped. Battery: same.</p></div>
+    </div>
+  </section>
+
+  <section class="concept">
+    <div class="head"><span class="num">D</span><h2>Score Bug</h2><span class="tag">The live score up top, a ticker at the foot</span></div>
+    <div class="faces">
+      <figure><img src="img/score-bug-arsenal.png" alt="Score Bug on an Arsenal day"><figcaption>Arsenal day</figcaption></figure>
+      <figure><img src="img/score-bug-ferrari.png" alt="Score Bug on a Ferrari day"><figcaption>Ferrari day</figcaption></figure>
+      <figure><img src="img/score-bug-space.png" alt="Score Bug on a space day"><figcaption>Space day</figcaption></figure>
+    </div>
+    <div class="notes">
+      <div class="note"><h3>Borrowed from</h3><p>Sky Sports and Premier League score bugs; the news ticker along the foot of a sports channel.</p></div>
+      <div class="note"><h3>What changes</h3><p>The sports line becomes a TV score bug at the top (sport tab, both scores, a red LIVE flag, the Test's days underneath). The time is huge and centred, and all five stats run in a ticker along the bottom.</p></div>
+      <div class="note"><h3>On the watch</h3><p class="cost">The score bug is built from the same widget data as today's sports line. Battery: same.</p></div>
+    </div>
+  </section>
+
+  <section class="round">
+    <div class="eyebrow">Round 1</div>
+    <h2 class="roundh">The first four directions</h2>
+  </section>
+
+  <div class="today">
+    <img src="img/today.png" alt="Today's face: date, time, telemetry capsule, three dials and the sports pill">
+    <p><strong>Today's face.</strong> Eight elements at roughly the same weight: date, time, capsule, three dials, the pill and a busy photo. The redesigns pick one hero, the time, and give everything else a clear, quieter place.</p>
+  </div>
+
+  <section class="concept">
+    <div class="head"><span class="num">1</span><h2>Broadcast</h2><span class="tag">The F1 TV lower third, on your wrist</span></div>
+    <div class="faces">
+      <figure><img src="img/broadcast-arsenal.png" alt="Broadcast on an Arsenal day"><figcaption>Arsenal day</figcaption></figure>
+      <figure><img src="img/broadcast-ferrari.png" alt="Broadcast on a Ferrari day"><figcaption>Ferrari day</figcaption></figure>
+      <figure><img src="img/broadcast-space.png" alt="Broadcast on a space day"><figcaption>Space day</figcaption></figure>
+    </div>
+    <div class="notes">
+      <div class="note"><h3>Borrowed from</h3><p>F1 TV and Sky Sports on-screen graphics; TAG Heuer's F1 edition. Condensed type, timing-board readouts.</p></div>
+      <div class="note"><h3>What changes</h3><p>A huge condensed time, flush left. Steps, calories and FPL become slim gauges on the right. The sports line is a TV caption bar with a team-colour tab.</p></div>
+      <div class="note"><h3>On the watch</h3><p class="cost">All static drawing, like today. Gauges are lit dashes, the same technique as the step lights. Adds one font (Barlow Condensed, open licence). Battery: same.</p></div>
+    </div>
+  </section>
+
+  <section class="concept">
+    <div class="head"><span class="num">2</span><h2>Concentric</h2><span class="tag">Rings on the edge, a calm centre</span></div>
+    <div class="faces">
+      <figure><img src="img/concentric-arsenal.png" alt="Concentric on an Arsenal day"><figcaption>Arsenal day</figcaption></figure>
+      <figure><img src="img/concentric-ferrari.png" alt="Concentric on a Ferrari day"><figcaption>Ferrari day</figcaption></figure>
+      <figure><img src="img/concentric-space.png" alt="Concentric on a space day"><figcaption>Space day</figcaption></figure>
+    </div>
+    <div class="notes">
+      <div class="note"><h3>Borrowed from</h3><p>Pixel Watch's Concentric and Apple's Activity rings: data lives on the bezel, the middle stays quiet.</p></div>
+      <div class="note"><h3>What changes</h3><p>Steps, calories and battery become three rings around the edge, open at the bottom for the sports line. A light hour against a bold minute. Heart rate and FPL sit in two small chips.</p></div>
+      <div class="note"><h3>On the watch</h3><p class="cost">Rings use the arc sweep the dials already use. The photo is dimmed in advance, at build time and in the monthly set. Battery: same, or a touch lower (darker photo).</p></div>
+    </div>
+  </section>
+
+  <section class="concept">
+    <div class="head"><span class="num">3</span><h2>Matchday</h2><span class="tag">A programme cover: photo above, team colour below</span></div>
+    <div class="faces">
+      <figure><img src="img/matchday-arsenal.png" alt="Matchday on an Arsenal day"><figcaption>Arsenal day</figcaption></figure>
+      <figure><img src="img/matchday-ferrari.png" alt="Matchday on a Ferrari day"><figcaption>Ferrari day</figcaption></figure>
+      <figure><img src="img/matchday-space.png" alt="Matchday on a space day"><figcaption>Space day</figcaption></figure>
+    </div>
+    <div class="notes">
+      <div class="note"><h3>Borrowed from</h3><p>Football matchday programmes and magazine covers; the big type of Pixel's Rushhour.</p></div>
+      <div class="note"><h3>What changes</h3><p>Giant numerals sit across the line between photo and band. All five readings sit in one scoreboard row. The sports line becomes the headline at the foot.</p></div>
+      <div class="note"><h3>On the watch</h3><p class="cost">The simplest to build: a solid band and text, no dials. Half the screen is a deep solid colour, so it lights fewer pixels than today. Battery: lower.</p></div>
+    </div>
+  </section>
+
+  <section class="concept">
+    <div class="head"><span class="num">4</span><h2>Glass</h2><span class="tag">The photo stays vivid, frosted glass carries the data</span></div>
+    <div class="faces">
+      <figure><img src="img/glass-arsenal.png" alt="Glass on an Arsenal day"><figcaption>Arsenal day</figcaption></figure>
+      <figure><img src="img/glass-ferrari.png" alt="Glass on a Ferrari day"><figcaption>Ferrari day</figcaption></figure>
+      <figure><img src="img/glass-space.png" alt="Glass on a space day"><figcaption>Space day</figcaption></figure>
+    </div>
+    <div class="notes">
+      <div class="note"><h3>Borrowed from</h3><p>Apple's Liquid Glass numerals (watchOS 26 "Flow") and frosted cockpit displays.</p></div>
+      <div class="note"><h3>What changes</h3><p>The time sits on a frosted disc, with steps, calories and FPL on three glass tiles. Heart rate and battery go in a glass capsule up top, and the sports line on a glass bar.</p></div>
+      <div class="note"><h3>On the watch</h3><p class="cost">The watch can't blur live, so the frosting is baked into each photo: the built-in ones at build time, the monthly ones by the photo picker. Battery: same.</p></div>
+    </div>
+  </section>
+
+  <footer>
+    <p><strong>How to choose:</strong> pick a round 3 number (1 to 3), or mix (for example Quiet's photo-first layout with Clean Feed's bigger time). The chosen one gets built for all 24 daily designs and the monthly photos, then installed and screenshotted on the watch. These are renders made on the Mac from the real photos and fonts; on the watch, text sizes may shift by a pixel or two.</p>
+  </footer>
+</main>

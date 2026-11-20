@@ -1,0 +1,1 @@
+F1 circuit outlines from github.com/bacinger/f1-circuits (MIT License). Formula 1 is a trademark of Formula One Licensing B.V.; shapes only, no logos.

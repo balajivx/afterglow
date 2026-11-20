@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Gunners x Scuderia: a watch face in Google's Watch Face Format (version 1), so the watch itself draws it
+     from res/raw/watchface.xml; the app has no code. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-feature android:name="android.hardware.type.watch" />
+    <application
+        android:hasCode="false"
+        android:label="Gunners x Scuderia">
+        <property
+            android:name="com.google.wear.watchface.format.version"
+            android:value="1" />
+    </application>
+</manifest>

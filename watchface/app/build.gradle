@@ -1,0 +1,14 @@
+plugins { id "com.android.application" }
+
+// A Watch Face Format watch face: no code, just resources (res/raw/watchface.xml draws it).
+android {
+    namespace "com.balaji.watchface.gunnersscuderia"
+    compileSdk 34
+    defaultConfig {
+        applicationId "com.balaji.watchface.gunnersscuderia"
+        minSdk 33
+        targetSdk 33
+        versionCode 26
+        versionName "1.0"
+    }
+}

@@ -263,4 +263,120 @@ public class FeedTest {
         for (int d = 1; d <= 366; d++) all.add(Wallpapers.nameFor(d));
         assertEquals(24, all.size());
     }
+
+    // ---- Moments (the buzz)
+
+    @Test
+    public void testWicketsParse() {
+        java.util.Map<String, Integer> w = Moments.wickets("NZ 368/9 (113 ov)  ·  IND 45/2");
+        assertEquals(Integer.valueOf(9), w.get("NZ"));
+        assertEquals(Integer.valueOf(2), w.get("IND"));
+        w = Moments.wickets("IND 410/8 & 22/1 (6 ov)  ·  NZ 243 & 180");
+        assertEquals(Integer.valueOf(1), w.get("IND"));   // latest innings only
+        assertEquals(Integer.valueOf(10), w.get("NZ"));   // all out
+        assertTrue(Moments.wickets("India won toss & fielded").isEmpty());
+    }
+
+    private static Feed.Item cricket(boolean live, boolean past, String body) {
+        Feed.Item i = new Feed.Item();
+        i.sport = Feed.CRICKET; i.senior = true; i.ref = "123/456"; i.head = "NZ v IND";
+        i.live = live; i.past = past; i.body = body;
+        return i;
+    }
+
+    @Test
+    public void testMomentsWicketsBothWays() {
+        java.util.Map<String, String> seen = new java.util.HashMap<>();
+        java.util.List<Feed.Item> l = new java.util.ArrayList<>();
+        l.add(cricket(true, false, "NZ 368/8 (110 ov)  ·  IND 0/0"));
+        assertTrue("first look: nothing to tell", Moments.diff(l, seen).isEmpty());
+        l.set(0, cricket(true, false, "NZ 368/9 (112 ov)  ·  IND 0/0"));
+        java.util.List<Moments.Event> e = Moments.diff(l, seen);
+        assertEquals(1, e.size());
+        assertEquals("good", e.get(0).kind);                 // India took one: two quick taps
+        assertEquals("NZ 368/9 · IND 0/0", e.get(0).text);
+        assertTrue("same score again: quiet", Moments.diff(l, seen).isEmpty());
+        l.set(0, cricket(true, false, "NZ 368/9 (112 ov)  ·  IND 12/1 (4 ov)"));
+        e = Moments.diff(l, seen);
+        assertEquals(1, e.size());
+        assertEquals("bad", e.get(0).kind);                  // India lost one: one long buzz
+    }
+
+    @Test
+    public void testMomentsResultsOnlyOnce() {
+        java.util.Map<String, String> seen = new java.util.HashMap<>();
+        java.util.List<Feed.Item> l = new java.util.ArrayList<>();
+        l.add(cricket(false, true, "India won by 5 wkts"));
+        assertTrue("an old result never seen live: quiet", Moments.diff(l, seen).isEmpty());
+        seen.clear();
+        l.set(0, cricket(true, false, "NZ 200/9  ·  IND 150/5"));
+        Moments.diff(l, seen);
+        l.set(0, cricket(false, true, "India won by 5 wkts"));
+        java.util.List<Moments.Event> e = Moments.diff(l, seen);
+        assertEquals(1, e.size());
+        assertEquals("result", e.get(0).kind);
+        assertTrue("told once", Moments.diff(l, seen).isEmpty());
+        // Arsenal: the first result seen is just remembered; a new one is told
+        Feed.Item a = new Feed.Item();
+        a.sport = Feed.FOOTBALL; a.past = true; a.ref = "e1"; a.head = "Arsenal 1–0 Hull City"; a.body = "Won  ·  Sat 7 Nov";
+        java.util.List<Feed.Item> al = new java.util.ArrayList<>();
+        al.add(a);
+        assertTrue(Moments.diff(al, seen).isEmpty());
+        Feed.Item b = new Feed.Item();
+        b.sport = Feed.FOOTBALL; b.past = true; b.ref = "e2"; b.head = "Newcastle United 1–2 Arsenal"; b.body = "Won  ·  Today";
+        al.set(0, b);
+        e = Moments.diff(al, seen);
+        assertEquals(1, e.size());
+        assertEquals("Won", e.get(0).text);
+    }
+
+    // ---- The lap ring
+
+    @Test
+    public void testRing() {
+        long now = 1_000_000_000_000L, h = 3600_000L;
+        Feed.Item up = new Feed.Item();
+        up.sport = Feed.FOOTBALL; up.time = now + 12 * h;
+        assertEquals(0.5f, Ring.of(up, now).fill, 0.001);
+        up.time = now + 30 * h;
+        assertNull("more than a day off: no ring", Ring.of(up, now));
+        Feed.Item t20 = new Feed.Item();
+        t20.sport = Feed.CRICKET; t20.live = true; t20.time = now - h; t20.end = t20.time + 4 * h; t20.competition = "T20";
+        t20.body = "IND 120/3 (10 ov)";
+        assertEquals(0.5f, Ring.of(t20, now).fill, 0.001);
+        t20.competition = "ODI"; t20.end = t20.time + 9 * h; t20.body = "IND 120/3 (25 ov)";
+        assertEquals(0.5f, Ring.of(t20, now).fill, 0.001);
+        Feed.Item test = new Feed.Item();
+        test.sport = Feed.CRICKET; test.live = true; test.time = now - 24 * h; test.end = test.time + 5 * 24 * h; test.day = 2;
+        Ring r = Ring.of(test, now);
+        assertEquals(5, r.segments);
+        assertEquals(0.2f, r.fill, 0.001);                    // day 2 just begun: one day of five done
+        Feed.Item ars = new Feed.Item();
+        ars.sport = Feed.FOOTBALL; ars.live = true; ars.time = now - (long) (52.5 * 60_000L);
+        assertEquals(0.5f, Ring.of(ars, now).fill, 0.001);
+        Feed.Item done = new Feed.Item();
+        done.past = true;
+        assertNull(Ring.of(done, now));
+        assertEquals(17f + 4f / 6, Ring.overs("NZ 243  ·  IND 120/3 (17.4 ov)"), 0.001);
+    }
+
+    // ---- The F1 weekend and the grid strip
+
+    @Test
+    public void testWeekend() {
+        long h = 3600_000L, t = 1_000_000_000_000L;
+        java.util.List<Weekend.Station> st = Weekend.parse("FP1=" + t + ",FP2=" + (t + 4 * h) + ",Quali=" + (t + 24 * h) + ",Race=" + (t + 48 * h));
+        assertEquals(4, st.size());
+        assertEquals(0, Weekend.current(st, t - h));                 // before FP1: FP1 is next
+        assertTrue(Weekend.onNow(st.get(0), t + h / 2));             // FP1 on now
+        assertEquals(1, Weekend.current(st, t + 2 * h));             // after FP1: FP2 next
+        assertEquals(3, Weekend.current(st, t + 49 * h));            // the race on now
+        assertEquals(4, Weekend.current(st, t + 51 * h));            // weekend over
+        assertEquals("Quali", Weekend.shortName("Qualifying"));
+        assertTrue(Weekend.parse(null).isEmpty());
+        java.util.Map<String, Integer> f = Visuals.ferraris("Podium NOR VER HAD  ·  Ferrari LEC P8, HAM P9");
+        assertEquals(Integer.valueOf(8), f.get("LEC"));
+        assertEquals(Integer.valueOf(9), f.get("HAM"));
+        assertTrue(Visuals.ferraris("Podium NOR VER HAD").isEmpty());
+    }
 }

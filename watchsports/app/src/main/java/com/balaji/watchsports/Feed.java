@@ -38,6 +38,7 @@ final class Feed {
         long resume;     // live cricket at stumps: about when the next day's play starts; 0 otherwise
         int day;         // live cricket: ESPN's day of the match (a Test's 1-5); 0 unknown
         String circuit;  // F1: Jolpica's circuitId ("vegas"), for the track's drawing
+        String sessions; // F1 next race: the weekend in order, "FP1=ms,FP2=ms,FP3=ms,Quali=ms,Race=ms"
         String shortTitle, shortText; // for a small widget: "IND" / "117/1", "ARS" / "22:00"
         String ref;      // for its details page (Details): ESPN "league/event", TheSportsDB event id, F1 "next"/"last"
         String tag;      // sport badge: "CRICKET", "FOOTBALL", "TENNIS"
@@ -163,7 +164,7 @@ final class Feed {
             for (Item i : items) {
                 a.put(new JSONObject().put("sport", i.sport).put("live", i.live).put("past", i.past).put("time", i.time)
                         .put("senior", i.senior).put("head", i.head).put("body", i.body).put("comp", i.competition)
-                        .put("end", i.end).put("res", i.resume).put("day", i.day).put("cir", i.circuit)
+                        .put("end", i.end).put("res", i.resume).put("day", i.day).put("cir", i.circuit).put("ses", i.sessions)
                         .put("st", i.shortTitle).put("sx", i.shortText).put("ref", i.ref).put("tag", i.tag));
             }
             java.nio.file.Files.write(f.toPath(), a.toString().getBytes("UTF-8"));
@@ -190,6 +191,7 @@ final class Feed {
                 i.resume = o.optLong("res");
                 i.day = o.optInt("day");
                 i.circuit = o.optString("cir", null);
+                i.sessions = o.optString("ses", null);
                 i.head = o.optString("head");
                 i.body = o.optString("body");
                 i.shortTitle = o.optString("st");
@@ -399,10 +401,13 @@ final class Feed {
             long earliest = raceTime;
             String sessionName = "Race";
             String[] sessions = {"FirstPractice", "SecondPractice", "ThirdPractice", "SprintQualifying", "Sprint", "Qualifying"};
+            java.util.TreeMap<Long, String> weekend = new java.util.TreeMap<>();
+            weekend.put(raceTime, "Race");
             for (String s : sessions) {
                 JSONObject sObj = r.optJSONObject(s);
                 if (sObj != null) {
                     long t = parseTime(sObj.optString("date") + "T" + sObj.optString("time", "00:00:00Z"));
+                    weekend.put(t, Weekend.shortName(s));
                     if (t > now && (earliest == raceTime || t < earliest)) {
                         earliest = t;
                         sessionName = s.equals("FirstPractice") ? "FP1" : s.equals("SecondPractice") ? "FP2" : s.equals("ThirdPractice") ? "FP3" : s.equals("SprintQualifying") ? "Sprint Shootout" : s;
@@ -410,6 +415,12 @@ final class Feed {
                 }
             }
             it.time = earliest;
+            StringBuilder ws = new StringBuilder();
+            for (java.util.Map.Entry<Long, String> e : weekend.entrySet()) {
+                if (ws.length() > 0) ws.append(',');
+                ws.append(e.getValue()).append('=').append(e.getKey());
+            }
+            it.sessions = ws.toString();
             it.head = r.optString("raceName").replace("Grand Prix", "GP");
             it.shortTitle = "F1";
             it.live = now >= it.time && now < it.time + 2 * 3600_000L;

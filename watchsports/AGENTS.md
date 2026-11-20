@@ -77,3 +77,9 @@ showed only "Empty"); the rail's data carries text, title and a tap action like 
 never drew). Both log "WatchSports" lines per request. Seen on the watch: today's downloaded photo, the rail's
 Test-day dashes (2 of 5), "LIVE · NZ 368 · IND 0/0"; tapping the pill still opens the app.
 
+v16 (2026-11-20, 1.6): Moments buzz (`Moments`: wickets per side from the score line, India take one = two taps,
+lose one = long buzz, results = three taps; only on changes since the last check, rides on the widget's/app's
+existing fetches; Settings switch in the app). App visuals (`Visuals`, only animate while on screen): lap ring
+round the screen edge (`Ring`: countdown in the last 24 h, Test days 5 segments, overs of 20/50, Arsenal minutes,
+F1 session time; sweeps in), breathing LIVE dot, F1 weekend stations (`Weekend`, from `Item.sessions`), Ferrari grid
+strip (20 bars, Ferraris lit). Tests in FeedTest (wickets, moments, ring, weekend).

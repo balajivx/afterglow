@@ -59,6 +59,7 @@ public class NextUpComplication extends ComplicationDataSourceService {
             // 20 Nov: a check that reached nothing used to count as done, so a Test sat on "STUMPS" for hours
             // after play resumed. Only a check that got an answer counts; a failed one is tried again next time.
             boolean reached = online && Feed.lastFetched > 0;
+            if (reached) Moments.check(this, all); // a wicket or a result since the last check: buzz (no extra fetches)
             Feed.Item h = Feed.headline(all, now);
             if (online || h != null) {
                 Feed.Item n = Feed.nextItem(all, now);

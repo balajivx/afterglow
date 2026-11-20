@@ -32,5 +32,5 @@ if [ -n "$WITH_WORKFLOW" ]; then
 fi
 git diff --cached --stat | tail -1
 git commit -q -m "$MSG" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
-git push -q origin HEAD:main
+git -c credential.helper= -c "credential.helper=!gh auth git-credential" push -q origin HEAD:main
 git log --oneline -1

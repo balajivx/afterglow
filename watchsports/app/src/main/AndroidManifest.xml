@@ -4,6 +4,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-feature android:name="android.hardware.type.watch" />
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- the Moments buzz (wickets and results) -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- to skip a check when there's no network (the watch asleep, or away from the phone) -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 

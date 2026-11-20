@@ -25,6 +25,8 @@ public class MainActivity extends Activity {
     static final int INDIA_BLUE = 0xFF2F6FEB;
     private LinearLayout list;
     private ScrollView scroll;
+    private Visuals.LapRing ring;
+    private Feed.Item heroItem;
     private final android.os.Handler tick = new android.os.Handler(android.os.Looper.getMainLooper());
     private Runnable ticker;
 
@@ -39,8 +41,19 @@ public class MainActivity extends Activity {
         int side = dp(22);
         list.setPadding(side, dp(34), side, dp(48)); // a round screen: room at the top and bottom
         scroll.addView(list);
-        setContentView(scroll);
+        // The lap ring sits behind the list, round the screen's edge, and stays put while the list scrolls.
+        android.widget.FrameLayout root = new android.widget.FrameLayout(this);
+        root.setBackgroundColor(0xFF000000);
+        scroll.setBackgroundColor(0x00000000);
+        ring = new Visuals.LapRing(this);
+        root.addView(ring, new android.widget.FrameLayout.LayoutParams(-1, -1));
+        root.addView(scroll, new android.widget.FrameLayout.LayoutParams(-1, -1));
+        setContentView(root);
         list.addView(text("Loading…", 15, DIM, false, Gravity.CENTER));
+        if (android.os.Build.VERSION.SDK_INT >= 33
+                && checkSelfPermission("android.permission.POST_NOTIFICATIONS") != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(new String[]{"android.permission.POST_NOTIFICATIONS"}, 1); // for the Moments buzz
+        }
     }
 
     /** The crown scrolls the list, as in the watch's own apps. */
@@ -82,6 +95,7 @@ public class MainActivity extends Activity {
         super.onResume();
         new Thread(() -> {
             List<Feed.Item> items = Feed.load(getCacheDir(), true);
+            if (Feed.lastFetched > 0) Moments.check(this, items); // fresh news since the last look: buzz for it
             runOnUiThread(() -> show(items));
             // Trigger complication refresh with fresh data
             // Everything was just fetched and cached: the widget shows it without going online again.
@@ -103,6 +117,8 @@ public class MainActivity extends Activity {
         }
 
         Feed.Item h = Feed.headline(items, System.currentTimeMillis());
+        heroItem = h;
+        ring.set(h == null ? null : Ring.of(h, System.currentTimeMillis()), h == null ? RED : accent(h.sport));
         if (h != null) hero(h);
 
         // Section 1: My Favorites
@@ -114,6 +130,33 @@ public class MainActivity extends Activity {
         // Section 2: Other Scores
         mainHeader("OTHER SCORES", WHITE);
         otherSection(items);
+        settings();
+    }
+
+    /** The one setting: the Moments buzz (wickets and results). */
+    private void settings() {
+        mainHeader("SETTINGS", DIM);
+        android.widget.Switch buzz = new android.widget.Switch(this);
+        buzz.setText("Buzz for wickets & results");
+        buzz.setTextColor(WHITE);
+        buzz.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+        buzz.setChecked(Moments.on(this));
+        buzz.setOnCheckedChangeListener((v, on) ->
+                getSharedPreferences("moments", MODE_PRIVATE).edit().putBoolean("on", on).apply());
+        list.addView(buzz);
+        list.addView(text("India take a wicket: two taps · India lose one: a long buzz · results: three taps", 11, DIM, false, Gravity.START));
+    }
+
+    /** F1 extras for a card: the weekend's stations (next race) or the Ferraris on the grid (last race). */
+    private void f1Extras(LinearLayout card, Feed.Item i) {
+        if (i.sport != Feed.F1) return;
+        if (!i.past) {
+            List<Weekend.Station> st = Weekend.parse(i.sessions);
+            if (st.size() > 1) card.addView(new Visuals.WeekendLine(this, st, System.currentTimeMillis()));
+        } else {
+            java.util.Map<String, Integer> f = Visuals.ferraris(i.body);
+            if (!f.isEmpty()) card.addView(new Visuals.GridStrip(this, f));
+        }
     }
 
     // ---- The hero: the one thing that matters now, big, in its team's colours
@@ -156,8 +199,13 @@ public class MainActivity extends Activity {
         card.setBackground(bg);
 
         String sport = h.sport == Feed.CRICKET ? "INDIA CRICKET" : h.sport == Feed.FOOTBALL ? "ARSENAL" : "FORMULA 1";
-        String state = h.live ? (h.resume > now ? "STUMPS" : "●  LIVE") : h.past ? "RESULT" : "NEXT UP";
-        card.addView(text(state + "  ·  " + sport, 11, h.live && h.resume == 0 ? accent : DIM, true, Gravity.CENTER));
+        boolean inPlay = h.live && h.resume <= now;
+        String state = h.live ? (h.resume > now ? "STUMPS" : "LIVE") : h.past ? "RESULT" : "NEXT UP";
+        LinearLayout stateRow = new LinearLayout(this);
+        stateRow.setGravity(Gravity.CENTER);
+        if (inPlay) stateRow.addView(Visuals.pulse(this, accent == YELLOW ? RED : accent)); // breathing LIVE dot
+        stateRow.addView(text(state + "  ·  " + sport, 11, inPlay ? accent : DIM, true, Gravity.CENTER));
+        card.addView(stateRow);
 
         // Badges: "NZ  v  IND" as two coloured discs (F1: the race name only)
         String[] sides = h.head.split(" v | [0-9]+–[0-9]+ ");
@@ -215,6 +263,7 @@ public class MainActivity extends Activity {
         TextView smallView = text(small, 12, h.live ? YELLOW : DIM, false, Gravity.CENTER);
         smallView.setPadding(0, dp(2), 0, 0);
         card.addView(smallView);
+        f1Extras(card, h);
 
         // A countdown keeps itself current while it's on screen (and only then)
         if (!h.live && !h.past && h.time > now) {
@@ -307,6 +356,7 @@ public class MainActivity extends Activity {
             card.addView(text(tag, 11, i.live ? color : DIM, true, Gravity.START));
             card.addView(text(i.head, 15, WHITE, true, Gravity.START));
             card.addView(text(i.body, 13, i.live ? YELLOW : DIM, false, Gravity.START));
+            if (i != heroItem) f1Extras(card, i);
             if (i.ref != null && !i.ref.isEmpty()) {
                 card.setClickable(true);
                 card.setOnClickListener(v -> startActivity(DetailActivity.open(this, i)));

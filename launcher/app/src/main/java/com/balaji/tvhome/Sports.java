@@ -61,9 +61,15 @@ final class Sports {
         long start;
         /** True when this is the match that is in play right now (ESPN says so; TheSportsDB can't). */
         boolean live;
-        /** The live score line, e.g. "NZ 124/5 (44.5 ov)" — only set when [live]. */
+        /** The live score line, India's first (as the crests are), e.g. "IND 159/1 · NZ 368". */
         String score;
+        /** A break in a live match, e.g. "STUMPS", "LUNCH", "TEA": the pill shows it instead of LIVE. */
+        String pause;
     }
+
+    /** ESPN's status words that mean no play right now, though the match is still on. */
+    static final java.util.regex.Pattern PAUSE = java.util.regex.Pattern.compile(
+            "(?i)stumps|lunch|tea|drinks|innings break|rain.*|bad light|delay.*|interrupted|play suspended");
 
     static final class Race {
         String name;
@@ -303,14 +309,21 @@ final class Sports {
                             if (cs == null) continue;
                             boolean india = false;
                             StringBuilder scores = new StringBuilder();
-                            for (int k = 0; k < cs.length(); k++) {
-                                JSONObject c = cs.getJSONObject(k);
-                                String name = c.optString("displayName");
-                                if (name.equals("India") || name.startsWith("India ")) india = true;
-                                String s = c.optString("score");
-                                if (!s.isEmpty()) {
-                                    if (scores.length() > 0) scores.append("  ·  ");
-                                    scores.append(c.optString("abbreviation", name)).append(' ').append(s);
+                            // India's score first, matching the card's crests (ours, then theirs)
+                            for (int pass = 0; pass < 2; pass++) {
+                                for (int k = 0; k < cs.length(); k++) {
+                                    JSONObject c = cs.getJSONObject(k);
+                                    String name = c.optString("displayName");
+                                    boolean isIndia = name.equals("India") || name.startsWith("India ");
+                                    if (isIndia) india = true;
+                                    if (isIndia != (pass == 0)) continue;
+                                    String s = c.optString("score");
+                                    if (!s.isEmpty()) {
+                                        if (scores.length() > 0) scores.append(" · ");
+                                        // no "(39 ov)": the card has room for both scores, not the overs too
+                                        s = s.replaceAll("\\s*\\([^)]*ov\\)", "");
+                                        scores.append(c.optString("abbreviation", name)).append(' ').append(s);
+                                    }
                                 }
                             }
                             if (!india || !"in".equals(e.optString("status"))) continue;
@@ -322,8 +335,13 @@ final class Sports {
                             m.start = parseUtc(e.optString("date").replace("+00:00", "").replace("Z", ""));
                             m.live = true;
 
+                            JSONObject type = e.optJSONObject("fullStatus") == null ? null
+                                    : e.optJSONObject("fullStatus").optJSONObject("type");
+                            String state = type == null ? "" : type.optString("description");
                             String summary = e.optString("summary");
-                            if (!summary.isEmpty() && !"Live".equalsIgnoreCase(summary)) {
+                            if (PAUSE.matcher(state).matches()) m.pause = state.toUpperCase(Locale.UK);
+                            else if (PAUSE.matcher(summary).matches()) m.pause = summary.toUpperCase(Locale.UK);
+                            if (!summary.isEmpty() && !"Live".equalsIgnoreCase(summary) && !summary.equalsIgnoreCase(m.pause)) {
                                 if (scores.length() > 0) scores.append(" · ").append(summary);
                                 else scores.append(summary);
                             }
@@ -671,7 +689,7 @@ final class Sports {
                 if (cricket) {
                     label = cricketFormat(m.competition) + " · " + side;
                     if (m.live) {
-                        pill = "LIVE";
+                        pill = m.pause != null ? m.pause : "LIVE";
                         main = m.score != null ? m.score : "On now";
                     } else {
                         pill = countdown(m.start, now, cricketLength(m.competition));

@@ -1,0 +1,1 @@
+Circuit outlines: github.com/bacinger/f1-circuits (MIT License, (c) Tomislav Bacinger). Shapes only.

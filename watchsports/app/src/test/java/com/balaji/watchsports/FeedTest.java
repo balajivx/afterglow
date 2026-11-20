@@ -190,4 +190,77 @@ public class FeedTest {
         for (Feed.Item i : list) System.out.println("SNAP " + i.head + " live=" + i.live + " comp=" + i.competition
                 + " end=" + new java.util.Date(i.end) + " resume=" + (i.resume == 0 ? "-" : new java.util.Date(i.resume).toString()));
     }
+
+    @Test
+    public void testFaceLines() {
+        long now = System.currentTimeMillis(), soon = now + 2 * 3600_000L, nextWeek = now + 3 * 24 * 3600_000L,
+                later = now + 20 * 24 * 3600_000L;
+        // {label, head, body, shortTitle, shortText, start, day}
+        assertEquals("NZ 243/5 · Day 2 in ^1", line(true, now, "STUMPS", "NZ v IND", "NZ 243/5 (82 ov)", "IND", "LIVE", "" + soon, "2"));
+        assertEquals("NZ 312 & 140/4 · IND 98 · Stumps", line(true, now, "STUMPS", "NZ v IND", "NZ 312 & 140/4 (50 ov)  ·  IND 98", "IND", "LIVE", "" + soon, "4"));
+        assertEquals("NZ 243/5 · Play in ^1", line(true, now, "STUMPS", "NZ v IND", "NZ 243/5 (82 ov)", "IND", "LIVE", "" + soon)); // saved by v10
+        assertEquals("LIVE · NZ 243/5 · IND 40/3", line(false, now, "LIVE", "NZ v IND", "NZ 243/5 (82 ov)  ·  IND 40/3 (9 ov)", "IND", "40/3", "0", ""));
+        assertEquals("IND 410/8 & 22/1 · NZ 243 & 180", line(false, now, "LIVE", "NZ v IND", "IND 410/8 & 22/1 (6 ov)  ·  NZ 243 & 180", "IND", "22/1", "0", ""));
+        assertEquals("Newcastle vs ARS · in ^1", line(true, now, "ARSENAL", "Newcastle United v Arsenal", "Sat 21 Nov 23:00  ·  Premier League", "ARS", "23:00", "" + soon, ""));
+        assertEquals("Forest vs ARS · in ^1", line(true, now, "ARSENAL", "Nottingham Forest v Arsenal", "Sat 21 Nov 23:00  ·  Premier League", "ARS", "23:00", "" + soon, ""));
+        assertEquals("Newcastle vs ARS · Sat 23:00", line(false, now, "ARSENAL", "Newcastle United v Arsenal", "Sat 21 Nov 23:00  ·  Premier League", "ARS", "23:00", "" + nextWeek, ""));
+        assertEquals("Newcastle vs ARS · 5 Dec 23:00", line(false, now, "ARSENAL", "Newcastle United v Arsenal", "Sat 5 Dec 23:00  ·  Premier League", "ARS", "23:00", "" + later, ""));
+        assertEquals("Newcastle 1–2 ARS · Won", line(false, now, "ARSENAL", "Newcastle United 1–2 Arsenal", "Won  ·  Yesterday", "ARS", "W 2-1", "0", ""));
+        assertEquals("Newcastle vs ARS · LIVE", line(false, now, "LIVE", "Newcastle United v Arsenal", "On now · score at full time", "ARS", "LIVE", "0", ""));
+        assertEquals("Las Vegas · FP1 in ^1", line(true, now, "F1", "Las Vegas GP", "Tomorrow 06:00  ·  FP1", "F1", "06:00", "" + soon, ""));
+        assertEquals("Las Vegas · Tmrw 06:00 · FP1", line(false, now, "F1", "Las Vegas GP", "Tomorrow 06:00  ·  FP1", "F1", "06:00", "" + nextWeek, ""));
+        assertEquals("Abu Dhabi · Quali in ^1", line(true, now, "F1", "Abu Dhabi GP", "Sat 5 Dec 14:00  ·  Qualifying", "F1", "14:00", "" + soon, ""));
+        assertEquals("Brazilian · LEC P8 · HAM P9", line(false, now, "F1", "Brazilian GP", "Podium NOR VER HAD  ·  Ferrari LEC P8, HAM P9", "F1", "LEC P8", "0", ""));
+        assertEquals("Saudi · LEC P10 · HAM P12", line(false, now, "F1", "Saudi Arabian GP", "Podium VER NOR PIA  ·  Ferrari LEC P10, HAM P12", "F1", "LEC P10", "0", ""));
+    }
+
+    private static String line(boolean countdown, long now, String... p) {
+        return NextUpComplication.faceLine(p, countdown, now);
+    }
+
+
+    @Test
+    public void testRailValues() {
+        long now = 1_000_000_000_000L, h = 3600_000L;
+        assertEquals(-1f, RailComplication.value(0, false, 0, now), 0.01);             // nothing coming
+        assertEquals(-1f, RailComplication.value(now + 30 * h, false, 0, now), 0.01);  // over a day off
+        assertEquals(50f, RailComplication.value(now + 12 * h, false, 0, now), 0.01);  // half way through the last day
+        assertEquals(100f, RailComplication.value(now - h, false, 0, now), 0.01);      // started; next check catches up
+        assertEquals(100f, RailComplication.value(0, true, 0, now), 0.01);             // live (not a Test)
+        assertEquals(103f, RailComplication.value(0, true, 3, now), 0.01);             // a Test's third day
+        assertEquals(105f, RailComplication.value(0, true, 9, now), 0.01);             // never past five
+    }
+
+    @Test
+    public void testStumpsGivesWayWhenPlayIsDue() {
+        long now = 1_000_000_000_000L, h = 3600_000L;
+        Feed.Item test = new Feed.Item();
+        test.sport = Feed.CRICKET;
+        test.senior = true;
+        test.live = true;
+        test.time = now - 27 * h;          // day 1 began 27 h ago
+        test.resume = now - 3 * h;         // day 2 was due 3 h ago (the 20 Nov case)
+        assertEquals("PLAY", NextUpComplication.label(test, now));
+        assertTrue(NextUpComplication.liveNow(test, now));           // so the widget checks every 15 minutes
+        test.resume = now + 10 * h;        // overnight at stumps
+        assertEquals("STUMPS", NextUpComplication.label(test, now));
+        assertFalse(NextUpComplication.liveNow(test, now));          // no need to check every 15 minutes
+        test.resume = now + 10 * 60_000L;  // ten minutes before the start
+        assertTrue(NextUpComplication.liveNow(test, now));
+        test.resume = 0;                   // in play
+        assertEquals("LIVE", NextUpComplication.label(test, now));
+        assertEquals("NZ 243/5 · Day 2 on", line(false, now, "PLAY", "NZ v IND", "NZ 243/5 (82 ov)", "IND", "LIVE", "0", "2"));
+    }
+
+    @Test
+    public void testWallpaperForDayMatchesFace() {
+        // The face: theme = day % 3 (arsenal, ferrari, space), design = (day % 24) / 3; photo n is for design n - 1.
+        assertEquals("ferrari-5.jpg", Wallpapers.nameFor(13));   // 13 % 24 = 13: theme 1, design 4
+        assertEquals("arsenal-5.jpg", Wallpapers.nameFor(324));  // 20 Nov: 324 % 24 = 12: theme 0, design 4
+        assertEquals("space-8.jpg", Wallpapers.nameFor(23));
+        assertEquals("arsenal-1.jpg", Wallpapers.nameFor(24));
+        java.util.Set<String> all = new java.util.HashSet<>();
+        for (int d = 1; d <= 366; d++) all.add(Wallpapers.nameFor(d));
+        assertEquals(24, all.size());
+    }
 }

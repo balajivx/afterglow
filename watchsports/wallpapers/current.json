@@ -1,0 +1,125 @@
+{
+ "month": "2026-11",
+ "walls": [
+  {
+   "theme": "arsenal",
+   "n": 1,
+   "file": "2026-11/arsenal-1.jpg"
+  },
+  {
+   "theme": "arsenal",
+   "n": 2,
+   "file": "2026-11/arsenal-2.jpg"
+  },
+  {
+   "theme": "arsenal",
+   "n": 3,
+   "file": "2026-11/arsenal-3.jpg"
+  },
+  {
+   "theme": "arsenal",
+   "n": 4,
+   "file": "2026-11/arsenal-4.jpg"
+  },
+  {
+   "theme": "arsenal",
+   "n": 5,
+   "file": "2026-11/arsenal-5.jpg"
+  },
+  {
+   "theme": "arsenal",
+   "n": 6,
+   "file": "2026-11/arsenal-6.jpg"
+  },
+  {
+   "theme": "arsenal",
+   "n": 7,
+   "file": "2026-11/arsenal-7.jpg"
+  },
+  {
+   "theme": "arsenal",
+   "n": 8,
+   "file": "2026-11/arsenal-8.jpg"
+  },
+  {
+   "theme": "ferrari",
+   "n": 1,
+   "file": "2026-11/ferrari-1.jpg"
+  },
+  {
+   "theme": "ferrari",
+   "n": 2,
+   "file": "2026-11/ferrari-2.jpg"
+  },
+  {
+   "theme": "ferrari",
+   "n": 3,
+   "file": "2026-11/ferrari-3.jpg"
+  },
+  {
+   "theme": "ferrari",
+   "n": 4,
+   "file": "2026-11/ferrari-4.jpg"
+  },
+  {
+   "theme": "ferrari",
+   "n": 5,
+   "file": "2026-11/ferrari-5.jpg"
+  },
+  {
+   "theme": "ferrari",
+   "n": 6,
+   "file": "2026-11/ferrari-6.jpg"
+  },
+  {
+   "theme": "ferrari",
+   "n": 7,
+   "file": "2026-11/ferrari-7.jpg"
+  },
+  {
+   "theme": "ferrari",
+   "n": 8,
+   "file": "2026-11/ferrari-8.jpg"
+  },
+  {
+   "theme": "space",
+   "n": 1,
+   "file": "2026-11/space-1.jpg"
+  },
+  {
+   "theme": "space",
+   "n": 2,
+   "file": "2026-11/space-2.jpg"
+  },
+  {
+   "theme": "space",
+   "n": 3,
+   "file": "2026-11/space-3.jpg"
+  },
+  {
+   "theme": "space",
+   "n": 4,
+   "file": "2026-11/space-4.jpg"
+  },
+  {
+   "theme": "space",
+   "n": 5,
+   "file": "2026-11/space-5.jpg"
+  },
+  {
+   "theme": "space",
+   "n": 6,
+   "file": "2026-11/space-6.jpg"
+  },
+  {
+   "theme": "space",
+   "n": 7,
+   "file": "2026-11/space-7.jpg"
+  },
+  {
+   "theme": "space",
+   "n": 8,
+   "file": "2026-11/space-8.jpg"
+  }
+ ]
+}

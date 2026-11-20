@@ -7,8 +7,8 @@ android {
         applicationId "com.balaji.watchsports"
         minSdk 30
         targetSdk 34
-        versionCode 10
-        versionName "1.2"
+        versionCode 13
+        versionName "1.5"
     }
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17

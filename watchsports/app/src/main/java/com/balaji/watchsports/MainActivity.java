@@ -88,6 +88,8 @@ public class MainActivity extends Activity {
             long now = System.currentTimeMillis();
             getSharedPreferences("fetch", MODE_PRIVATE).edit().putLong("appAt", now).putLong("at", now).apply();
             ComplicationDataSourceUpdateRequester.create(this, new ComponentName(this, NextUpComplication.class)).requestUpdateAll();
+            // While the app is open the network is surely allowed: fetch a due month of face photos now.
+            if (Wallpapers.refresh(this, now)) WallpaperComplication.redraw(this);
         }).start();
     }
 
@@ -154,7 +156,7 @@ public class MainActivity extends Activity {
         card.setBackground(bg);
 
         String sport = h.sport == Feed.CRICKET ? "INDIA CRICKET" : h.sport == Feed.FOOTBALL ? "ARSENAL" : "FORMULA 1";
-        String state = h.live ? (h.resume > 0 ? "STUMPS" : "●  LIVE") : h.past ? "RESULT" : "NEXT UP";
+        String state = h.live ? (h.resume > now ? "STUMPS" : "●  LIVE") : h.past ? "RESULT" : "NEXT UP";
         card.addView(text(state + "  ·  " + sport, 11, h.live && h.resume == 0 ? accent : DIM, true, Gravity.CENTER));
 
         // Badges: "NZ  v  IND" as two coloured discs (F1: the race name only)
@@ -168,6 +170,17 @@ public class MainActivity extends Activity {
             row.addView(badge(abbr(sides[1])));
             card.addView(row);
         } else {
+            // F1: the circuit itself, drawn in Ferrari yellow (outlines from bacinger/f1-circuits, MIT)
+            int track = NextUpComplication.trackIcon(this, h.circuit, "track_");
+            if (h.sport == Feed.F1 && track != 0) {
+                android.widget.ImageView map = new android.widget.ImageView(this);
+                map.setImageResource(track);
+                map.setColorFilter(YELLOW);
+                LinearLayout.LayoutParams mp = new LinearLayout.LayoutParams(dp(84), dp(84));
+                mp.gravity = Gravity.CENTER_HORIZONTAL;
+                mp.topMargin = dp(4);
+                card.addView(map, mp);
+            }
             TextView t = text(h.head, 15, WHITE, true, Gravity.CENTER);
             t.setPadding(0, dp(6), 0, dp(2));
             card.addView(t);
@@ -188,6 +201,7 @@ public class MainActivity extends Activity {
             String rest = h.body.contains("  ·  ") ? h.body.substring(h.body.indexOf("  ·  ") + 5) : "";
             if (!rest.isEmpty()) small += "\n" + rest;
             if (h.resume > now) small += "\nPlay resumes in " + until(h.resume, now);
+            else if (h.resume > 0) small += "\nDay " + ((h.resume - h.time + 30 * 60_000L) / (24 * 3600_000L) + 1) + " under way";
         } else if (!h.live && !h.past && h.time > now) {
             big = until(h.time, now);
             small = h.body;

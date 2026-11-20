@@ -4,6 +4,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-feature android:name="android.hardware.type.watch" />
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- to skip a check when there's no network (the watch asleep, or away from the phone) -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
     <application
         android:icon="@drawable/icon"
@@ -32,6 +34,36 @@
             <meta-data android:name="android.support.wearable.complications.SUPPORTED_TYPES" android:value="LONG_TEXT,SHORT_TEXT" />
             <!-- Every 15 minutes (1 Nov: 5 cost battery; the app loads fresh when opened) -->
             <meta-data android:name="android.support.wearable.complications.UPDATE_PERIOD_SECONDS" android:value="900" />
+        </service>
+
+        <!-- The rail under the face's sports pill: how near the next start is, or a live Test's day. Never online;
+             no schedule of its own (NextUpComplication asks it to redraw when its answer changes). -->
+        <service
+            android:name=".RailComplication"
+            android:exported="true"
+            android:icon="@drawable/icon"
+            android:label="Sports: countdown rail"
+            android:permission="com.google.android.wearable.permission.BIND_COMPLICATION_PROVIDER">
+            <intent-filter>
+                <action android:name="android.support.wearable.complications.ACTION_COMPLICATION_UPDATE_REQUEST" />
+            </intent-filter>
+            <meta-data android:name="android.support.wearable.complications.SUPPORTED_TYPES" android:value="RANGED_VALUE" />
+            <meta-data android:name="android.support.wearable.complications.UPDATE_PERIOD_SECONDS" android:value="0" />
+        </service>
+
+        <!-- The face's photo of the day from this month's downloaded set (Wallpapers); a new set once a month.
+             Every 6 hours it re-sends today's and tomorrow's photos (from midnight); no network unless a month is due. -->
+        <service
+            android:name=".WallpaperComplication"
+            android:exported="true"
+            android:icon="@drawable/icon"
+            android:label="Monthly wallpapers"
+            android:permission="com.google.android.wearable.permission.BIND_COMPLICATION_PROVIDER">
+            <intent-filter>
+                <action android:name="android.support.wearable.complications.ACTION_COMPLICATION_UPDATE_REQUEST" />
+            </intent-filter>
+            <meta-data android:name="android.support.wearable.complications.SUPPORTED_TYPES" android:value="PHOTO_IMAGE" />
+            <meta-data android:name="android.support.wearable.complications.UPDATE_PERIOD_SECONDS" android:value="21600" />
         </service>
 
         <service

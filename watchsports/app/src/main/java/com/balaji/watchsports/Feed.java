@@ -36,6 +36,8 @@ final class Feed {
         String competition; // the match format from ESPN's class ("Test", "ODI", "T20"), else the league name
         long end;        // live cricket: when it is surely over (start + its format's length); 0 unknown
         long resume;     // live cricket at stumps: about when the next day's play starts; 0 otherwise
+        int day;         // live cricket: ESPN's day of the match (a Test's 1-5); 0 unknown
+        String circuit;  // F1: Jolpica's circuitId ("vegas"), for the track's drawing
         String shortTitle, shortText; // for a small widget: "IND" / "117/1", "ARS" / "22:00"
         String ref;      // for its details page (Details): ESPN "league/event", TheSportsDB event id, F1 "next"/"last"
         String tag;      // sport badge: "CRICKET", "FOOTBALL", "TENNIS"
@@ -73,8 +75,12 @@ final class Feed {
      * As [load(File, boolean)], but only the sports in [only] go online (null: all); the rest come from [cache]
      * while it holds them (a live Test needn't re-fetch Arsenal and F1 every 15 minutes).
      */
+    /** How many sports the last load() actually reached (0: none; the answers all came from the cache). */
+    static volatile int lastFetched;
+
     static List<Item> load(java.io.File cache, boolean includeOther, java.util.Set<Integer> only) {
         List<Item> out = new ArrayList<>();
+        int fetched = 0;
         int[] sports = includeOther ? new int[]{CRICKET, FOOTBALL, F1, OTHER} : new int[]{CRICKET, FOOTBALL, F1};
         for (int sport : sports) {
             if (only != null && !only.contains(sport) && cache != null) {
@@ -104,10 +110,12 @@ final class Feed {
                 }
             }
             java.io.File f = cache == null ? null : new java.io.File(cache, "sport" + sport + ".json");
+            if (got != null) fetched++;
             if (got != null && f != null) save(f, got);
             if (got == null && f != null) got = restore(f);
             if (got != null) out.addAll(got);
         }
+        lastFetched = fetched;
         return out;
     }
 
@@ -155,7 +163,7 @@ final class Feed {
             for (Item i : items) {
                 a.put(new JSONObject().put("sport", i.sport).put("live", i.live).put("past", i.past).put("time", i.time)
                         .put("senior", i.senior).put("head", i.head).put("body", i.body).put("comp", i.competition)
-                        .put("end", i.end).put("res", i.resume)
+                        .put("end", i.end).put("res", i.resume).put("day", i.day).put("cir", i.circuit)
                         .put("st", i.shortTitle).put("sx", i.shortText).put("ref", i.ref).put("tag", i.tag));
             }
             java.nio.file.Files.write(f.toPath(), a.toString().getBytes("UTF-8"));
@@ -180,6 +188,8 @@ final class Feed {
                 i.competition = o.optString("comp");
                 i.end = o.optLong("end");
                 i.resume = o.optLong("res");
+                i.day = o.optInt("day");
+                i.circuit = o.optString("cir", null);
                 i.head = o.optString("head");
                 i.body = o.optString("body");
                 i.shortTitle = o.optString("st");
@@ -308,8 +318,9 @@ final class Feed {
                     // grace for an early start). Until then the widget needn't check every 15 minutes.
                     JSONObject full = e.optJSONObject("fullStatus");
                     JSONObject type = full == null ? null : full.optJSONObject("type");
+                    it.day = full == null ? 0 : full.optInt("dayNumber", 0);
                     if (type != null && ("112".equals(type.optString("id")) || "Stumps".equalsIgnoreCase(type.optString("description")))) {
-                        int day = Math.max(1, full.optInt("dayNumber", 1));
+                        int day = Math.max(1, it.day);
                         it.resume = it.time + day * 24 * 3600_000L - 30 * 60_000L;
                     }
                     out.add(it);
@@ -382,6 +393,8 @@ final class Feed {
             Item it = new Item();
             it.sport = F1;
             it.ref = "next";
+            JSONObject circuit = r.optJSONObject("Circuit");
+            it.circuit = circuit == null ? null : circuit.optString("circuitId", null);
             long raceTime = parseTime(r.optString("date") + "T" + r.optString("time", "00:00:00Z"));
             long earliest = raceTime;
             String sessionName = "Race";
@@ -412,6 +425,8 @@ final class Feed {
             it.sport = F1;
             it.past = true;
             it.ref = "last";
+            JSONObject lastCircuit = r.optJSONObject("Circuit");
+            it.circuit = lastCircuit == null ? null : lastCircuit.optString("circuitId", null);
             it.time = parseTime(r.optString("date") + "T" + r.optString("time", "00:00:00Z"));
             it.head = r.optString("raceName").replace("Grand Prix", "GP");
             StringBuilder podium = new StringBuilder(), ferrari = new StringBuilder();

@@ -26,7 +26,7 @@ from PIL import Image, ImageEnhance, ImageFilter
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 API = "https://commons.wikimedia.org/w/api.php"
-UA = "WatchSports/1.0 (personal Wear OS watch face wallpapers; github.com/balajivx/afterglow)"
+UA = "WatchFaceWallpapers/1.0 (personal, non-commercial; one run a month)"
 S = 450
 
 # Where each theme's photos come from, best first: a Commons category, or "search:" a Commons search (deepcat:
@@ -163,15 +163,15 @@ def main():
                 continue
             n = len(picked) + 1
             im = None
-            for attempt in range(4):  # Commons asks for patience ("429 Too many requests"): wait, then again
+            for attempt in range(5):  # Commons asks for patience ("429 Too many requests"): wait longer, then again
                 try:
-                    time.sleep(1.5 + 6 * attempt)
+                    time.sleep(2 if attempt == 0 else 20 * attempt)
                     req = urllib.request.Request(c["url"], headers={"User-Agent": UA})
                     raw = urllib.request.urlopen(req, timeout=60).read()
                     im = process(raw, n in DARK_INK.get(theme, set()))
                     break
                 except Exception as e:
-                    print("retry" if attempt < 3 else "skip", c["title"][5:60], e)
+                    print("retry" if attempt < 4 else "skip", c["title"][5:60], e)
             if im is None:
                 continue
             name = f"{theme}-{n}.jpg"

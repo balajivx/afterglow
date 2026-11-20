@@ -14,7 +14,8 @@ from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
-sys.path.insert(0, os.path.join(os.path.dirname(ROOT), "watch-sports", "art"))
+for _d in ("watch-sports", "watchsports"):  # ~/Afterglow/watch-sports locally; watchsports/ beside this in the afterglow repo
+    sys.path.insert(0, os.path.join(os.path.dirname(ROOT), _d, "art"))
 import icons  # noqa: E402  (the sports widget's icons, shared with the face)
 
 K = 2                      # supersampling

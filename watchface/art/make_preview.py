@@ -77,7 +77,8 @@ def render(t, n, sports=("football", "Newcastle vs ARS  ·  in 2h 14m")):
 
 
 # The sport icons are defined once, in the sports app (~/Afterglow/watch-sports/art/icons.py)
-sys.path.insert(0, os.path.join(os.path.dirname(ROOT), "watch-sports", "art"))
+for _d in ("watch-sports", "watchsports"):  # ~/Afterglow/watch-sports locally; watchsports/ beside this in the afterglow repo
+    sys.path.insert(0, os.path.join(os.path.dirname(ROOT), _d, "art"))
 import icons
 
 

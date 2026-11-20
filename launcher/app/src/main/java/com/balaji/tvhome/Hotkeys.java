@@ -6,7 +6,6 @@ import android.graphics.Canvas;
 import android.graphics.Paint;
 import android.graphics.PixelFormat;
 import android.graphics.RectF;
-import android.media.AudioManager;
 import android.os.Handler;
 import android.os.Looper;
 import android.text.TextPaint;
@@ -62,199 +61,8 @@ public class Hotkeys extends AccessibilityService {
     /** The service while it runs: the Control Center's picture buttons go through it. */
     static Hotkeys running;
 
-    private static final String YOUTUBE_PKG = "com.google.android.youtube.tv";
-    private boolean ytAdMuted = false;
-    private long lastSkipAttempt = 0;
-    private final Runnable checkAdRunnable = this::handleYouTubeAd;
-
     @Override
     public void onAccessibilityEvent(AccessibilityEvent event) {
-        if (event == null) return;
-        CharSequence pkg = event.getPackageName();
-        if (pkg == null || !YOUTUBE_PKG.contentEquals(pkg)) {
-            if (ytAdMuted) {
-                unmuteAdAudio();
-            }
-            return;
-        }
-
-        int type = event.getEventType();
-        if (type == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
-            handler.removeCallbacks(checkAdRunnable);
-            handler.post(checkAdRunnable);
-        } else if (type == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED) {
-            handler.removeCallbacks(checkAdRunnable);
-            handler.postDelayed(checkAdRunnable, 50);
-        }
-    }
-
-    private void handleYouTubeAd() {
-        AccessibilityNodeInfo root = null;
-        try {
-            root = getRootInActiveWindow();
-        } catch (Exception ignored) {
-        }
-        if (root == null) return;
-
-        try {
-            // 1. Try to find and click any "Skip Ad" or "Dismiss" button immediately
-            boolean skipped = findAndClickSkip(root);
-            if (skipped) {
-                lastSkipAttempt = System.currentTimeMillis();
-                if (ytAdMuted) unmuteAdAudio();
-                return;
-            }
-
-            // 2. Check if an ad is currently playing on screen
-            boolean adPlaying = isAdPlaying(root);
-            if (adPlaying) {
-                if (!ytAdMuted) {
-                    muteAdAudio();
-                }
-            } else {
-                if (ytAdMuted) {
-                    unmuteAdAudio();
-                }
-            }
-        } finally {
-            try {
-                root.recycle();
-            } catch (Exception ignored) {
-            }
-        }
-    }
-
-    private boolean findAndClickSkip(AccessibilityNodeInfo node) {
-        if (node == null) return false;
-
-        CharSequence text = node.getText();
-        CharSequence desc = node.getContentDescription();
-        String viewId = node.getViewIdResourceName();
-
-        if (isSkipNode(text, desc, viewId)) {
-            if (performClick(node)) return true;
-        }
-
-        int count = node.getChildCount();
-        for (int i = 0; i < count; i++) {
-            AccessibilityNodeInfo child = null;
-            try {
-                child = node.getChild(i);
-            } catch (Exception ignored) {
-            }
-            if (child != null) {
-                boolean res = findAndClickSkip(child);
-                child.recycle();
-                if (res) return true;
-            }
-        }
-        return false;
-    }
-
-    private boolean isSkipNode(CharSequence text, CharSequence desc, String id) {
-        if (text != null && matchesSkip(text.toString())) return true;
-        if (desc != null && matchesSkip(desc.toString())) return true;
-        if (id != null && matchesSkipId(id)) return true;
-        return false;
-    }
-
-    private boolean matchesSkip(String s) {
-        String lower = s.toLowerCase(Locale.ROOT).trim();
-        return lower.equals("skip") || lower.equals("skip ad") || lower.equals("skip ads")
-                || lower.startsWith("skip ad in") || lower.startsWith("skip in")
-                || lower.contains("skip ad") || lower.equals("dismiss") || lower.equals("no thanks");
-    }
-
-    private boolean matchesSkipId(String id) {
-        String lower = id.toLowerCase(Locale.ROOT);
-        return lower.contains("skip_ad") || lower.contains("skip_button")
-                || lower.contains("ad_skip") || lower.contains("skip_ad_button");
-    }
-
-    private boolean performClick(AccessibilityNodeInfo node) {
-        if (node == null) return false;
-        long now = System.currentTimeMillis();
-        if (now - lastSkipAttempt < 300) return true;
-
-        if (node.isClickable()) {
-            boolean success = node.performAction(AccessibilityNodeInfo.ACTION_CLICK);
-            if (success) return true;
-        }
-        AccessibilityNodeInfo p = node.getParent();
-        while (p != null) {
-            if (p.isClickable()) {
-                boolean success = p.performAction(AccessibilityNodeInfo.ACTION_CLICK);
-                p.recycle();
-                if (success) return true;
-                break;
-            }
-            AccessibilityNodeInfo next = p.getParent();
-            p.recycle();
-            p = next;
-        }
-        return node.performAction(AccessibilityNodeInfo.ACTION_CLICK);
-    }
-
-    private boolean isAdPlaying(AccessibilityNodeInfo node) {
-        if (node == null) return false;
-
-        CharSequence text = node.getText();
-        CharSequence desc = node.getContentDescription();
-        String id = node.getViewIdResourceName();
-
-        if (text != null && matchesAdIndicator(text.toString())) return true;
-        if (desc != null && matchesAdIndicator(desc.toString())) return true;
-        if (id != null && matchesAdId(id)) return true;
-
-        int count = node.getChildCount();
-        for (int i = 0; i < count; i++) {
-            AccessibilityNodeInfo child = null;
-            try {
-                child = node.getChild(i);
-            } catch (Exception ignored) {
-            }
-            if (child != null) {
-                boolean found = isAdPlaying(child);
-                child.recycle();
-                if (found) return true;
-            }
-        }
-        return false;
-    }
-
-    private boolean matchesAdIndicator(String s) {
-        String lower = s.toLowerCase(Locale.ROOT).trim();
-        return lower.startsWith("ad ·") || lower.startsWith("ad: ")
-                || lower.startsWith("ad 1 of") || lower.startsWith("ad 2 of")
-                || lower.equals("ad") || lower.equals("sponsored")
-                || lower.contains("ad will end in") || lower.contains("video will play after ad");
-    }
-
-    private boolean matchesAdId(String id) {
-        String lower = id.toLowerCase(Locale.ROOT);
-        return lower.contains("ad_progress") || lower.contains("ad_countdown") || lower.contains("ad_badge");
-    }
-
-    private void muteAdAudio() {
-        try {
-            AudioManager am = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
-            if (am != null) {
-                am.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_MUTE, 0);
-                ytAdMuted = true;
-            }
-        } catch (Exception ignored) {
-        }
-    }
-
-    private void unmuteAdAudio() {
-        try {
-            AudioManager am = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
-            if (am != null) {
-                am.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_UNMUTE, 0);
-                ytAdMuted = false;
-            }
-        } catch (Exception ignored) {
-        }
     }
 
     @Override
@@ -286,17 +94,11 @@ public class Hotkeys extends AccessibilityService {
 
     @Override
     public void onInterrupt() {
-        if (ytAdMuted) {
-            unmuteAdAudio();
-        }
     }
 
     @Override
     public void onDestroy() {
         super.onDestroy();
-        if (ytAdMuted) {
-            unmuteAdAudio();
-        }
         if (running == this) running = null;
         try {
             unregisterReceiver(testKey);

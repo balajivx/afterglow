@@ -263,63 +263,93 @@ final class Sports {
      * at all — it keeps the finished match as "next" for hours and lists the *series'* next fixture as the
      * India event — so without this the card shows a Test starting a week away while the real one is on.
      * [online] gates the network call: offline, the last thing stands.
+     *
+     * Returns null only when ESPN says nothing is live AND there is no cached live match. A network or
+     * parse failure is treated as "ESPN didn't answer" and the last known live match is kept, so a single
+     * hiccup never drops the live score off the card.
      */
     static Match cricketLive(boolean online) {
         if (!online) return lastLiveCricket;
+        Match found = fetchLiveCricket();
+        if (found != null) {
+            lastLiveCricket = found;
+            return found;
+        }
+        // ESPN answered but no India match is live right now: drop the cached live score so the card
+        // shows the next fixture instead of a stale "LIVE" line from a match that is over.
+        if (lastLiveCricket != null && lastLiveCricket.live) {
+            long age = System.currentTimeMillis() - lastLiveCricket.start;
+            if (age > Sports.cricketLength(lastLiveCricket.competition)) lastLiveCricket = null;
+        }
+        return lastLiveCricket;
+    }
+
+    /**
+     * Fetches live cricket from ESPN with a short timeout and graceful fallback.
+     * Returns null on any failure (network, parse, no live match) — caller keeps the cached value.
+     */
+    private static Match fetchLiveCricket() {
         try {
-            JSONArray leagues = new JSONObject(Net.getString(ESPN_CRICKET))
-                    .getJSONArray("sports").getJSONObject(0).getJSONArray("leagues");
-            for (int i = 0; i < leagues.length(); i++) {
-                JSONArray events = leagues.optJSONObject(i).optJSONArray("events");
-                for (int j = 0; events != null && j < events.length(); j++) {
-                    JSONObject e = events.getJSONObject(j);
-                    JSONArray cs = e.optJSONArray("competitors");
-                    if (cs == null) continue;
-                    boolean india = false;
-                    StringBuilder scores = new StringBuilder();
-                    for (int k = 0; k < cs.length(); k++) {
-                        JSONObject c = cs.getJSONObject(k);
-                        String name = c.optString("displayName");
-                        if (name.equals("India") || name.startsWith("India ")) india = true;
-                        String s = c.optString("score");
-                        if (!s.isEmpty()) {
-                            if (scores.length() > 0) scores.append("  ·  ");
-                            scores.append(c.optString("abbreviation", name)).append(' ').append(s);
+            // ESPN can be slow; one retry with a shorter read timeout helps on flaky TV Wi-Fi
+            for (int attempt = 0; attempt < 2; attempt++) {
+                try {
+                    String json = Net.getString(ESPN_CRICKET);
+                    JSONArray leagues = new JSONObject(json).getJSONArray("sports").getJSONObject(0).getJSONArray("leagues");
+                    for (int i = 0; i < leagues.length(); i++) {
+                        JSONArray events = leagues.optJSONObject(i).optJSONArray("events");
+                        for (int j = 0; events != null && j < events.length(); j++) {
+                            JSONObject e = events.getJSONObject(j);
+                            JSONArray cs = e.optJSONArray("competitors");
+                            if (cs == null) continue;
+                            boolean india = false;
+                            StringBuilder scores = new StringBuilder();
+                            for (int k = 0; k < cs.length(); k++) {
+                                JSONObject c = cs.getJSONObject(k);
+                                String name = c.optString("displayName");
+                                if (name.equals("India") || name.startsWith("India ")) india = true;
+                                String s = c.optString("score");
+                                if (!s.isEmpty()) {
+                                    if (scores.length() > 0) scores.append("  ·  ");
+                                    scores.append(c.optString("abbreviation", name)).append(' ').append(s);
+                                }
+                            }
+                            if (!india || !"in".equals(e.optString("status"))) continue;
+                            Match m = new Match();
+                            m.home = csLength(cs, 0);
+                            m.away = csLength(cs, 1);
+                            m.ourHome = "India".equals(m.home) || m.home.startsWith("India ");
+                            m.competition = leagues.optJSONObject(i).optString("name");
+                            m.start = parseUtc(e.optString("date").replace("+00:00", "").replace("Z", ""));
+                            m.live = true;
+
+                            String summary = e.optString("summary");
+                            if (!summary.isEmpty() && !"Live".equalsIgnoreCase(summary)) {
+                                if (scores.length() > 0) scores.append(" · ").append(summary);
+                                else scores.append(summary);
+                            }
+                            m.score = scores.length() > 0 ? scores.toString() : "Live";
+
+                            JSONObject c0 = cs.optJSONObject(0);
+                            JSONObject c1 = cs.optJSONObject(1);
+                            m.homeBadgeUrl = c0 == null ? null : c0.optString("logo", null);
+                            m.awayBadgeUrl = c1 == null ? null : c1.optString("logo", null);
+                            m.homeBadge = teamIdFor(m.home, c0 == null ? null : c0.optString("id", null));
+                            m.awayBadge = teamIdFor(m.away, c1 == null ? null : c1.optString("id", null));
+
+                            if (m.start > 0) return m;
                         }
                     }
-                    if (!india || !"in".equals(e.optString("status"))) continue;
-                    Match m = new Match();
-                    m.home = csLength(cs, 0);
-                    m.away = csLength(cs, 1);
-                    m.ourHome = "India".equals(m.home) || m.home.startsWith("India ");
-                    m.competition = leagues.optJSONObject(i).optString("name");
-                    m.start = parseUtc(e.optString("date").replace("+00:00", "").replace("Z", ""));
-                    m.live = true;
-
-                    String summary = e.optString("summary");
-                    if (!summary.isEmpty() && !"Live".equalsIgnoreCase(summary)) {
-                        if (scores.length() > 0) scores.append(" · ").append(summary);
-                        else scores.append(summary);
-                    }
-                    m.score = scores.length() > 0 ? scores.toString() : "Live";
-
-                    JSONObject c0 = cs.optJSONObject(0);
-                    JSONObject c1 = cs.optJSONObject(1);
-                    m.homeBadgeUrl = c0 == null ? null : c0.optString("logo", null);
-                    m.awayBadgeUrl = c1 == null ? null : c1.optString("logo", null);
-                    m.homeBadge = teamIdFor(m.home, c0 == null ? null : c0.optString("id", null));
-                    m.awayBadge = teamIdFor(m.away, c1 == null ? null : c1.optString("id", null));
-
-                    if (m.start > 0) {
-                        lastLiveCricket = m;
-                        return m;
-                    }
+                    // ESPN answered, no live India match — stop retrying
+                    return null;
+                } catch (IOException e) {
+                    if (attempt == 0) continue; // retry once on network error
+                    return null;
                 }
             }
         } catch (Exception ignored) {
-            // Offline or ESPN hiccuped: the next fixture stays shown.
+            // Any other parse error: give up, keep cache
         }
-        return lastLiveCricket;
+        return null;
     }
 
     private static String teamIdFor(String teamName, String espnId) {

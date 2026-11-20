@@ -62,7 +62,8 @@
             <intent-filter>
                 <action android:name="android.support.wearable.complications.ACTION_COMPLICATION_UPDATE_REQUEST" />
             </intent-filter>
-            <meta-data android:name="android.support.wearable.complications.SUPPORTED_TYPES" android:value="PHOTO_IMAGE" />
+            <!-- the manifest's name for PHOTO_IMAGE is the old one, LARGE_IMAGE (PHOTO_IMAGE here matches nothing) -->
+            <meta-data android:name="android.support.wearable.complications.SUPPORTED_TYPES" android:value="LARGE_IMAGE" />
             <meta-data android:name="android.support.wearable.complications.UPDATE_PERIOD_SECONDS" android:value="21600" />
         </service>
 

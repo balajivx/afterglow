@@ -23,7 +23,9 @@ public class RailComplication extends ComplicationDataSourceService {
     @Override
     public void onComplicationRequest(ComplicationRequest request, ComplicationRequestListener listener) {
         try {
-            listener.onComplicationData(data(request.getComplicationType()));
+            ComplicationData d = data(request.getComplicationType());
+            android.util.Log.i("WatchSports", "rail request " + request.getComplicationType() + " -> " + (d == null ? "null" : d.getType()));
+            listener.onComplicationData(d);
         } catch (Exception ignored) {
         }
     }
@@ -45,9 +47,16 @@ public class RailComplication extends ComplicationDataSourceService {
         return left <= 0 ? 100 : 100f * (1 - left / (24f * 3600_000L));
     }
 
-    private static RangedValueComplicationData ranged(float v) {
-        return new RangedValueComplicationData.Builder(v, 0f, 105f,
-                new PlainComplicationText.Builder("Sports: " + Math.round(v)).build()).build();
+    private RangedValueComplicationData ranged(float v) {
+        // Text, title and a tap action as well, like the FPL dial's data (20 Nov: a bare value never reached the face).
+        String text = v > 100 ? "Day " + Math.round(v - 100) : v >= 100 ? "LIVE" : Math.round(v) + "%";
+        android.app.PendingIntent open = android.app.PendingIntent.getActivity(this, 1,
+                new android.content.Intent(this, MainActivity.class).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK),
+                android.app.PendingIntent.FLAG_IMMUTABLE);
+        return new RangedValueComplicationData.Builder(v, 0f, 105f, new PlainComplicationText.Builder("Sports " + text).build())
+                .setText(new PlainComplicationText.Builder(text).build())
+                .setTitle(new PlainComplicationText.Builder("SPORTS").build())
+                .setTapAction(open).build();
     }
 
     @Override

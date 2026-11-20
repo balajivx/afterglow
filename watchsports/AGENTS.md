@@ -71,3 +71,9 @@ in the afterglow repo a GitHub Action (`wallpapers/workflow/watch-wallpapers.yml
 watch, `Wallpapers.refresh` downloads a newer set (<= every 6 h until it arrives; also when the app opens) and
 `WallpaperComplication` (PHOTO_IMAGE, today + tomorrow-from-midnight timeline, every 6 h) feeds face slot 6.
 Publish with `./sync_to_afterglow.sh "msg"`: it keeps the Action's photo sets on GitHub as they are.
+v15 (2026-11-20, installed and checked on the watch 07:42): the photo widget's manifest type must be the old
+name LARGE_IMAGE (PHOTO_IMAGE in SUPPORTED_TYPES matches nothing: the face's default never bound and the picker
+showed only "Empty"); the rail's data carries text, title and a tap action like the FPL dial's (a bare value
+never drew). Both log "WatchSports" lines per request. Seen on the watch: today's downloaded photo, the rail's
+Test-day dashes (2 of 5), "LIVE · NZ 368 · IND 0/0"; tapping the pill still opens the app.
+

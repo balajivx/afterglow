@@ -35,6 +35,7 @@ public class WallpaperComplication extends ComplicationDataSourceService {
         io.execute(() -> {
             try {
                 long now = System.currentTimeMillis();
+                android.util.Log.i("WatchSports", "wallpaper request " + type + ", set " + Wallpapers.have(this));
                 if (hasNetwork()) Wallpapers.refresh(this, now);
                 if (type != ComplicationType.PHOTO_IMAGE) {
                     listener.onComplicationData(null);

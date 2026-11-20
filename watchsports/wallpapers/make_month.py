@@ -107,10 +107,13 @@ def lum(im, box):
     return sum(g.getdata()) / (255 * 1200)
 
 
-def process(raw, dark_ink):
-    """Like the face's built-in walls (make_walls.py): square crop, livelier colour, a smoked centre for the
-    clock; then a band behind the date, dark for white ink or light for dark ink, until it reads. None for a
-    photo that's mostly empty black (a sparse star field reads as a blank face)."""
+REV = 2  # how the photos are prepared; bump it to have watches fetch a month's set again (2: Clean Feed)
+
+
+def process(raw, dark_ink=False):
+    """For the Clean Feed face (20 Nov 2026): square crop, a little livelier, nothing baked in (the face lays its own
+    scrim over the photo). None for a photo that's mostly empty black (a sparse star field reads as a blank face) or
+    has cut-off black corners (old Hubble mosaics). [dark_ink] is unused since Clean Feed (one white date)."""
     im = Image.open(io.BytesIO(raw)).convert("RGB")
     side = min(im.size)
     left, top = (im.width - side) // 2, (im.height - side) // 2
@@ -118,33 +121,9 @@ def process(raw, dark_ink):
     g = im.convert("L").resize((90, 90))
     if sum(1 for v in g.getdata() if v < 14) > 0.7 * 8100:
         return None
-    if sum(1 for v in g.getdata() if v <= 2) > 0.06 * 8100:  # cut-off corners (old Hubble "staircase" mosaics)
+    if sum(1 for v in g.getdata() if v <= 2) > 0.06 * 8100:
         return None
-    im = ImageEnhance.Contrast(ImageEnhance.Color(im).enhance(1.25)).enhance(1.10)
-    c = S / 2
-    mask = Image.new("L", (S, S), 0)
-    px = mask.load()
-    for y in range(S):
-        for x in range(S):
-            r = math.hypot(x - c, y - c)
-            px[x, y] = 0 if r >= 225 else 158 if r <= 102 else int(158 * 0.5 * (1 + math.cos(math.pi * (r - 102) / 123)))
-    im = Image.composite(Image.new("RGB", (S, S), (4, 6, 12)), im, mask.filter(ImageFilter.GaussianBlur(8)))
-    # the date sits at y 34-97 (weekday 48, date 77)
-    box = (80, 30, 370, 96)
-    band = Image.new("L", (S, S), 0)
-    bp = band.load()
-    for y in range(S):
-        a = 1.0 if 26 <= y <= 100 else max(0.0, 1 - min(abs(y - 26), abs(y - 100)) / 24)
-        for x in range(S):
-            bp[x, y] = int(255 * a)
-    tone = (250, 248, 244) if dark_ink else (4, 6, 12)
-    for k in range(1, 9):
-        need_ok = lum(im, box) >= 0.55 if dark_ink else lum(im, box) <= 0.22
-        if need_ok:
-            break
-        layer = Image.new("RGB", (S, S), tone)
-        im = Image.composite(layer, im, band.point(lambda v: v * 0.12))
-    return im
+    return ImageEnhance.Contrast(ImageEnhance.Color(im).enhance(1.15)).enhance(1.06)
 
 
 def main():
@@ -187,7 +166,7 @@ def main():
             sys.exit(f"only {len(picked)} photos for {theme}: keeping last month's set")
         used.update(c["title"] for c in picked)
     open(os.path.join(out_dir, "CREDITS.tsv"), "w").write("\n".join(credits) + "\n")
-    json.dump({"month": month, "walls": walls}, open(os.path.join(HERE, "current.json"), "w"), indent=1)
+    json.dump({"month": month, "rev": REV, "walls": walls}, open(os.path.join(HERE, "current.json"), "w"), indent=1)
     open(hist_path, "w").write("\n".join(sorted(t for t in used if t)) + "\n")
     months = sorted(d for d in os.listdir(HERE) if re.fullmatch(r"\d{4}-\d{2}", d))
     for old in months[:-2]:

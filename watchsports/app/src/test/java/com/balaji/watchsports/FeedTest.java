@@ -379,4 +379,13 @@ public class FeedTest {
         assertEquals(Integer.valueOf(9), f.get("HAM"));
         assertTrue(Visuals.ferraris("Podium NOR VER HAD").isEmpty());
     }
+
+    @Test
+    public void testWallpaperSetIsNewer() {
+        assertTrue(Wallpapers.isNewer("2026-12", 1, "2026-11", 2));   // a new month
+        assertTrue(Wallpapers.isNewer("2026-11", 2, "2026-11", 1));   // the same month, prepared again
+        assertFalse(Wallpapers.isNewer("2026-11", 2, "2026-11", 2));  // already have it
+        assertFalse(Wallpapers.isNewer("2026-10", 9, "2026-11", 1));  // an older month
+        assertTrue(Wallpapers.isNewer("2026-11", 1, "", 1));          // nothing yet
+    }
 }

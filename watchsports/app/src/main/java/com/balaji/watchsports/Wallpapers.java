@@ -67,13 +67,17 @@ final class Wallpapers {
         SharedPreferences p = c.getSharedPreferences("walls", Context.MODE_PRIVATE);
         String thisMonth = new SimpleDateFormat("yyyy-MM", Locale.UK).format(new Date(now));
         String have = p.getString("month", "");
-        if (have.compareTo(thisMonth) >= 0) return false;
-        if (now - p.getLong("tried", 0) < RETRY) return false;
+        int haveRev = p.getInt("rev", 1);
+        // This month's set is here: still look once a day, in case it was re-published (a new "rev", e.g. photos
+        // prepared for a new face design). Before it's here: every 6 hours until it is.
+        long wait = have.compareTo(thisMonth) >= 0 ? 24 * 3600_000L : RETRY;
+        if (now - p.getLong("tried", 0) < wait) return false;
         p.edit().putLong("tried", now).apply();
         try {
             JSONObject m = new JSONObject(new String(get(BASE + "current.json"), "UTF-8"));
             String month = m.getString("month");
-            if (month.compareTo(have) <= 0) return false; // not published yet: try again later
+            int rev = m.optInt("rev", 1);
+            if (!isNewer(month, rev, have, haveRev)) return false; // nothing new: look again later
             JSONArray walls = m.getJSONArray("walls");
             File fresh = new File(c.getFilesDir(), "walls-new");
             deleteAll(fresh);
@@ -107,11 +111,17 @@ final class Wallpapers {
                 return false;
             }
             deleteAll(old);
-            p.edit().putString("month", month).apply();
+            p.edit().putString("month", month).putInt("rev", rev).apply();
             return true;
         } catch (Exception e) {
             return false;
         }
+    }
+
+    /** A published set worth fetching: a later month, or the same month prepared again (a higher rev). */
+    static boolean isNewer(String month, int rev, String have, int haveRev) {
+        int byMonth = month.compareTo(have);
+        return byMonth > 0 || (byMonth == 0 && rev > haveRev);
     }
 
     private static byte[] get(String url) throws Exception {

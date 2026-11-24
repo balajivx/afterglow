@@ -24,16 +24,8 @@ public class DslrTileService extends TileService {
     }
 
     @Override
-    @SuppressWarnings("deprecation")
-    public void onClick() {
-        Intent i = new Intent(this, EnhanceActivity.class)
-                .putExtra(EnhanceActivity.EXTRA_LATEST, true)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
-        if (Build.VERSION.SDK_INT >= 34) {
-            startActivityAndCollapse(PendingIntent.getActivity(this, 1, i,
-                    PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT));
-        } else {
-            startActivityAndCollapse(i);
-        }
+    public void onClick() {   // DSLR is a photo editor: opening its screen is the point
+        com.pixelcontrols.TileLaunch.open(this, new Intent(this, EnhanceActivity.class)
+                .putExtra(EnhanceActivity.EXTRA_LATEST, true).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP), 1);
     }
 }

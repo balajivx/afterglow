@@ -22,6 +22,15 @@ public final class DnsFilterEngine {
         void write(byte[] packet) throws IOException;
     }
 
+    /**
+     * Low signal "focus": decides whether a lookup may go out over the network. Lookups that may not are answered
+     * from the cache (even an expired answer) or refused, so background apps can't start new downloads and the app
+     * on screen gets the weak link. Called on a worker thread.
+     */
+    public interface Gate {
+        boolean allowUpstream(DnsPacket.Query q);
+    }
+
     /** Called for every lookup (blocked or not), e.g. to work out which app made it. */
     public interface BlockListener {
         void onBlocked(DnsPacket.Query q, BlockedEntry entry);
@@ -50,6 +59,9 @@ public final class DnsFilterEngine {
     public final AtomicLong cacheHits = new AtomicLong();
     /** The network failed to answer in time; the last known good answer kept the app working. */
     public final AtomicLong staleServed = new AtomicLong();
+    /** Background lookups held back by the focus gate (answered from cache or refused). */
+    public final AtomicLong heldBack = new AtomicLong();
+    public volatile Gate gate;
     public volatile boolean cacheEnabled = true;
     private final DnsCache cache = new DnsCache();
     /** Test hook: shifts the clock used for cache expiry. */
@@ -113,6 +125,17 @@ public final class DnsFilterEngine {
 
         executor.execute(new Runnable() {
             @Override public void run() {
+                Gate g = gate;
+                if (g != null && !g.allowUpstream(q)) {
+                    heldBack.incrementAndGet();
+                    try {
+                        byte[] stale = cacheEnabled ? cache.get(q, nowMs(), true) : null;
+                        byte[] r = stale != null ? stale : DnsPacket.servfailResponse(q);
+                        sink.write(DnsPacket.wrapResponse(q, r, r.length));
+                    } catch (IOException ignored) {
+                    }
+                    return;
+                }
                 byte[] resp = null;
                 try {
                     resp = upstream.resolve(q.dns);

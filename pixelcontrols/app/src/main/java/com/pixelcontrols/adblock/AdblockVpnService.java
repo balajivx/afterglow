@@ -21,7 +21,6 @@ import android.system.OsConstants;
 import android.system.StructPollfd;
 import android.util.Log;
 
-import com.pixelcontrols.DaemonClient;
 import com.pixelcontrols.MainActivity;
 import com.pixelcontrols.R;
 
@@ -176,6 +175,10 @@ public class AdblockVpnService extends VpnService {
             e.blockedQueries.set(old.blockedQueries.get());
         }
         e.paused = isPaused();
+        if (focusGate == null) focusGate = new FocusGate(this, new FocusGate.UidLookup() {
+            @Override public int ownerUid(DnsPacket.Query q) { return queryUid(q); }
+        });
+        e.gate = focusGate;   // Low signal: the app on screen gets the weak link
         e.setListener(new DnsFilterEngine.BlockListener() {
             @Override public void onBlocked(DnsPacket.Query q, DnsFilterEngine.BlockedEntry entry) { AdblockVpnService.this.onBlocked(q, entry); }
         });
@@ -252,11 +255,13 @@ public class AdblockVpnService extends VpnService {
             LinkProperties lp = net == null ? null : cm.getLinkProperties(net);
             if (lp != null) {
                 for (InetAddress a : lp.getDnsServers()) {
-                    if (!a.isLoopbackAddress() && !FAKE_DNS.equals(a.getHostAddress())) out.add(a);
+                    if (!a.isLoopbackAddress() && !FAKE_DNS.equals(a.getHostAddress()) && !out.contains(a)) out.add(a);
                 }
             }
-            out.add(InetAddress.getByAddress(new byte[]{1, 1, 1, 1}));
-            out.add(InetAddress.getByAddress(new byte[]{8, 8, 8, 8}));
+            InetAddress cf = InetAddress.getByAddress(new byte[]{1, 1, 1, 1});
+            InetAddress gg = InetAddress.getByAddress(new byte[]{8, 8, 8, 8});
+            if (!out.contains(cf)) out.add(cf);
+            if (!out.contains(gg)) out.add(gg);
         } catch (Exception ignored) { }
         upstream = out;
         upstreamNet = net;
@@ -271,17 +276,31 @@ public class AdblockVpnService extends VpnService {
             Network n = cm.getActiveNetwork();
             LinkProperties lp = n == null ? null : cm.getLinkProperties(n);
             if (lp != null && lp.getPrivateDnsServerName() != null) {
-                if (DaemonClient.sendOk("PRIVDNS_AUTO")) {
+                if (Adblock.privateDnsAuto(this)) {
                     changedPrivateDns = true;
                 } else {
                     Adblock.toast(this, "Private DNS is set to a specific provider, which bypasses the ad filter. "
-                            + "Set Settings › Network › Private DNS to Automatic, or start the helper daemon.");
+                            + "Set Settings › Network › Private DNS to Automatic.");
                 }
             }
         } catch (RuntimeException ignored) { }
     }
 
     // ------------------------------------------------------------------ attribution
+    private FocusGate focusGate;   // created once the service has its context (see establish)
+
+    /** The app (uid) that sent this DNS query, or -1 when Android can't tell. */
+    private int queryUid(DnsPacket.Query q) {
+        try {
+            ConnectivityManager cm = getSystemService(ConnectivityManager.class);
+            return cm.getConnectionOwnerUid(OsConstants.IPPROTO_UDP,
+                    new InetSocketAddress(InetAddress.getByAddress(q.srcIp), q.srcPort),
+                    new InetSocketAddress(InetAddress.getByAddress(q.dstIp), 53));
+        } catch (Exception e) {
+            return -1;
+        }
+    }
+
     private void onBlocked(DnsPacket.Query q, DnsFilterEngine.BlockedEntry entry) {
         if (entry.app != null) return;
         final byte[] src = q.srcIp.clone(), dst = q.dstIp.clone();
@@ -373,7 +392,7 @@ public class AdblockVpnService extends VpnService {
         getSystemService(NotificationManager.class).cancel(NOTIF_ID);
         if (changedPrivateDns) {
             changedPrivateDns = false;
-            new Thread(new Runnable() { @Override public void run() { DaemonClient.sendOk("PRIVDNS_RESTORE"); } }).start();
+            new Thread(new Runnable() { @Override public void run() { Adblock.privateDnsRestore(AdblockVpnService.this); } }).start();
         }
         Adblock.refreshTile(this);
         stopSelf();

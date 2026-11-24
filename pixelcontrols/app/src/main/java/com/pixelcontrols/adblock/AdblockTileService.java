@@ -32,17 +32,9 @@ public class AdblockTileService extends TileService {
         update();
     }
 
-    @SuppressWarnings("deprecation")
     private void launchToggleActivity() {
-        Intent i = new Intent(this, ToggleAdblockActivity.class)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                .putExtra(ToggleAdblockActivity.EXTRA_FORCE_ON, true);
-        if (Build.VERSION.SDK_INT >= 34) {
-            startActivityAndCollapse(PendingIntent.getActivity(this, 0, i,
-                    PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT));
-        } else {
-            startActivityAndCollapse(i);
-        }
+        com.pixelcontrols.TileLaunch.open(this, new Intent(this, ToggleAdblockActivity.class)
+                .putExtra(ToggleAdblockActivity.EXTRA_FORCE_ON, true), 0);
     }
 
     private void update() {

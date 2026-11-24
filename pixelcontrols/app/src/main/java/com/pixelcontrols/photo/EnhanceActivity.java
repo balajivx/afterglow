@@ -44,7 +44,8 @@ import java.io.OutputStream;
  * never modified; the result is saved to Pictures/PixelControls with the original's EXIF.
  */
 public class EnhanceActivity extends Activity {
-    private static final int REQ_PICK = 1, REQ_PERM = 2;
+    private static final int REQ_PICK = 1, REQ_PERM = 2, REQ_WRITE = 3;
+    private boolean pendingShare, askedWrite;
     /** Set by the DSLR tile: open the newest camera photo and save the edit automatically. */
     public static final String EXTRA_LATEST = "latest";
     private boolean autoSave;
@@ -88,6 +89,8 @@ public class EnhanceActivity extends Activity {
 
     // ------------------------------------------------------------------ latest photo (tile)
     private String readPermission() {
+        // The app targets Android 9 (for the Android Auto Wi-Fi switch); Android maps this to photo access on 13+.
+        if (getApplicationInfo().targetSdkVersion < 33) return android.Manifest.permission.READ_EXTERNAL_STORAGE;
         return Build.VERSION.SDK_INT >= 33 ? android.Manifest.permission.READ_MEDIA_IMAGES
                 : android.Manifest.permission.READ_EXTERNAL_STORAGE;
     }
@@ -95,15 +98,18 @@ public class EnhanceActivity extends Activity {
     private boolean canReadPhotos() {
         if (checkSelfPermission(readPermission()) == android.content.pm.PackageManager.PERMISSION_GRANTED) return true;
         // Android 14+: "Allow limited access" still lets us read the photos the user picked.
-        return Build.VERSION.SDK_INT >= 34 && checkSelfPermission("android.permission.READ_MEDIA_VISUAL_USER_SELECTED")
+        return Build.VERSION.SDK_INT >= 34 && getApplicationInfo().targetSdkVersion >= 33
+                && checkSelfPermission("android.permission.READ_MEDIA_VISUAL_USER_SELECTED")
                 == android.content.pm.PackageManager.PERMISSION_GRANTED;
     }
 
     private void openLatest() {
         if (!canReadPhotos()) {
             status.setText("DSLR needs access to your photos to edit the one you just took.");
-            if (Build.VERSION.SDK_INT >= 34)
+            if (Build.VERSION.SDK_INT >= 34 && getApplicationInfo().targetSdkVersion >= 33)
                 requestPermissions(new String[]{readPermission(), "android.permission.READ_MEDIA_VISUAL_USER_SELECTED"}, REQ_PERM);
+            else if (getApplicationInfo().targetSdkVersion < 33)
+                requestPermissions(new String[]{readPermission(), android.Manifest.permission.WRITE_EXTERNAL_STORAGE}, REQ_PERM);
             else
                 requestPermissions(new String[]{readPermission()}, REQ_PERM);
             return;
@@ -119,6 +125,10 @@ public class EnhanceActivity extends Activity {
     @Override
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] results) {
         super.onRequestPermissionsResult(requestCode, permissions, results);
+        if (requestCode == REQ_WRITE) {
+            saveAsync(pendingShare);   // try either way: MediaStore may allow it without the permission
+            return;
+        }
         if (requestCode != REQ_PERM) return;
         if (canReadPhotos()) {
             openLatest();
@@ -400,6 +410,15 @@ public class EnhanceActivity extends Activity {
     // ------------------------------------------------------------------ save
     private void saveAsync(final boolean thenShare) {
         if (busy || fullOriginal == null) return;
+        // Legacy-target app (Android 9 target): writing into Pictures/ may need storage access. Ask once, then save.
+        if (!askedWrite && getApplicationInfo().targetSdkVersion < 29
+                && checkSelfPermission(android.Manifest.permission.WRITE_EXTERNAL_STORAGE) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            pendingShare = thenShare;
+            askedWrite = true;
+            requestPermissions(new String[]{android.Manifest.permission.WRITE_EXTERNAL_STORAGE,
+                    android.Manifest.permission.READ_EXTERNAL_STORAGE}, REQ_WRITE);
+            return;
+        }
         final float s = strengthValue();
         if (savedUri != null && s == savedStrength) {   // already saved at this strength
             if (thenShare) shareUri(savedUri);

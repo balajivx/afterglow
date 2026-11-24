@@ -104,6 +104,20 @@ public final class DnsPacket {
         return r;
     }
 
+    /** "Server failure" answer: the app's resolver backs off and retries later (used to hold back background apps). */
+    public static byte[] servfailResponse(Query q) {
+        int qEnd = q.questionEnd;
+        byte[] r = new byte[qEnd];
+        System.arraycopy(q.dns, 0, r, 0, qEnd);
+        r[2] = (byte) (0x80 | (q.dns[2] & 0x79));
+        r[3] = (byte) 0x82;                                  // RA=1, RCODE=2 (SERVFAIL)
+        put16(r, 4, 1);
+        put16(r, 6, 0);
+        put16(r, 8, 0);
+        put16(r, 10, 0);
+        return r;
+    }
+
     /** Wraps a DNS payload into an IPv4/UDP packet travelling back to the querying app. */
     public static byte[] wrapResponse(Query q, byte[] dns, int dnsLen) {
         int udpLen = 8 + dnsLen;

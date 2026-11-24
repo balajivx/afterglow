@@ -44,6 +44,14 @@ public final class HedgedResolver {
                     if (servfail != null) return servfail;
                     throw new SocketTimeoutException("no DNS answer in " + deadlineMs + " ms");
                 }
+                if (asked < servers.size() && now >= nextHedge) {
+                    send(s, query, servers.get(asked++));
+                    nextHedge = now + hedgeMs;
+                }
+                if (!retransmitted && now >= retransmitAt) {
+                    for (int i = 0; i < asked; i++) send(s, query, servers.get(i));
+                    retransmitted = true;
+                }
                 long wake = deadline;
                 if (asked < servers.size()) wake = Math.min(wake, nextHedge);
                 if (!retransmitted) wake = Math.min(wake, retransmitAt);
@@ -61,16 +69,8 @@ public final class HedgedResolver {
                         continue;
                     }
                     return ans;
-                } catch (SocketTimeoutException e) {
-                    now = System.currentTimeMillis();
-                    if (asked < servers.size() && now >= nextHedge) {
-                        send(s, query, servers.get(asked++));
-                        nextHedge = now + hedgeMs;
-                    }
-                    if (!retransmitted && now >= retransmitAt) {
-                        for (int i = 0; i < asked; i++) send(s, query, servers.get(i));
-                        retransmitted = true;
-                    }
+                } catch (SocketTimeoutException ignored) {
+                    // Loop back to evaluate deadline/hedge/retransmit based on current time
                 }
             }
         }

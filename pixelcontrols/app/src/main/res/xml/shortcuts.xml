@@ -21,4 +21,15 @@
             android:targetClass="com.pixelcontrols.photo.EnhanceActivity"
             android:targetPackage="com.pixelcontrols" />
     </shortcut>
+    <shortcut
+        android:enabled="true"
+        android:icon="@drawable/ic_car"
+        android:shortcutId="android_auto"
+        android:shortcutShortLabel="@string/tile_auto"
+        android:shortcutLongLabel="@string/shortcut_android_auto_long">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetClass="com.pixelcontrols.MainActivity"
+            android:targetPackage="com.pixelcontrols" />
+    </shortcut>
 </shortcuts>

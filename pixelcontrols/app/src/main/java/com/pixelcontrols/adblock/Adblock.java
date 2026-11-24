@@ -11,7 +11,7 @@ import android.os.Looper;
 import android.service.quicksettings.TileService;
 import android.widget.Toast;
 
-import com.pixelcontrols.DaemonClient;
+import com.pixelcontrols.SecureSettings;
 
 import java.io.File;
 import java.io.FileInputStream;
@@ -31,7 +31,7 @@ import java.util.Set;
 public final class Adblock {
 
     public static final String MODE_VPN = "vpn";   // local DNS filter, per-app exclusions
-    public static final String MODE_DNS = "dns";   // Private DNS -> AdGuard via the daemon
+    public static final String MODE_DNS = "dns";   // Private DNS -> AdGuard DNS (set by the app)
 
     private static final String PREFS = "adblock";
     private static final String K_ENABLED = "enabled", K_MODE = "mode", K_VIDEO = "video_compat",
@@ -175,10 +175,10 @@ public final class Adblock {
             c.startService(new Intent(c, AdblockVpnService.class).setAction(AdblockVpnService.ACTION_START));
         } else {
             new Thread(new Runnable() { @Override public void run() {
-                boolean ok = DaemonClient.sendOk("ADBLOCK_DNS_ON");
+                boolean ok = liteOn(c);
                 if (!ok) {
                     prefs(c).edit().putBoolean(K_ENABLED, false).apply();
-                    toast(c, "Lite mode needs the helper daemon. Run start_daemon.sh via adb, or switch to Full filter.");
+                    toast(c, "Lite mode needs the one-time permission (run install.sh with the phone on USB), or switch to Full filter.");
                 }
                 refreshTile(c);
             } }).start();
@@ -192,7 +192,7 @@ public final class Adblock {
         AdblockVpnService s = AdblockVpnService.instance;
         if (s != null) s.shutdown();
         if (MODE_DNS.equals(mode(c))) {
-            new Thread(new Runnable() { @Override public void run() { DaemonClient.sendOk("ADBLOCK_DNS_OFF"); refreshTile(c); } }).start();
+            new Thread(new Runnable() { @Override public void run() { liteOff(c); refreshTile(c); } }).start();
         }
         refreshTile(c);
     }
@@ -211,11 +211,38 @@ public final class Adblock {
         return null;
     }
 
-    /** Re-applies Lite-mode DNS after the Low Signal toggle overwrote Private DNS settings. */
+    /** Re-applies the Private DNS adblock needs (Lite = AdGuard, full filter = Automatic) after Low signal changed it. */
     public static void reassertAfterDaemonChange(Context c) {
         if (!wantedOn(c)) return;
-        if (MODE_DNS.equals(mode(c))) DaemonClient.sendOk("ADBLOCK_DNS_ON");
-        else DaemonClient.sendOk("PRIVDNS_AUTO");   // strict Private DNS would bypass the filter
+        if (MODE_DNS.equals(mode(c))) liteOn(c);
+        else privateDnsAuto(c);   // strict Private DNS would bypass the filter
+    }
+
+    // Private DNS is changed by the app itself (WRITE_SECURE_SETTINGS, granted once over USB by install.sh).
+
+    /** Lite adblock: strict Private DNS via AdGuard DNS, watched so a blocked DNS never cuts the internet. */
+    public static boolean liteOn(Context c) {
+        boolean ok = SecureSettings.privateDnsLite(c);
+        if (ok) LiteDnsWatch.register(c);
+        return ok;
+    }
+
+    public static void liteOff(Context c) {
+        LiteDnsWatch.unregister(c);
+        SecureSettings.privateDnsRestore(c);
+    }
+
+    /** Full filter: strict Private DNS would bypass it, so Automatic while it runs. */
+    public static boolean privateDnsAuto(Context c) {
+        return SecureSettings.privateDnsAuto(c);
+    }
+
+    public static void privateDnsRestore(Context c) {
+        SecureSettings.privateDnsRestore(c);
+    }
+
+    public static boolean privateDnsFix(Context c) {
+        return SecureSettings.privateDnsFix(c, false);
     }
 
     static void reloadIfRunning(Context c) {

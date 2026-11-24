@@ -1,12 +1,16 @@
-# PixelControls 2.5
+# PixelControls 2.7
 
 Adblock (system-wide, with Quick Settings tile) + Pro Enhance for photos + your existing
 Low Signal / DSLR daemon controls.
 
 ## Install
-Prebuilt: `adb install -r pixelcontrols.apk` (debug-signed; minimum Android 10).
-From source on your Mac: `./build.sh` → `build/pixelcontrols.apk` (Gradle 8.7, AGP 8.5.2, JDK 17, no dependencies).
-Package name is `com.pixelcontrols`. If your old app used a different one, both will be installed side by side.
+Phone on USB, then on the Mac: `./install.sh` (add `--check` to run the on-device checks afterwards). It installs the
+app, removes the old AA Switch app (its features are now in here), grants the adb-only permissions and starts the
+helper daemon. Safe to re-run.
+From source: `./build.sh` → `build/pixelcontrols.apk` (Gradle 8.7, AGP 8.5.2, JDK 17, no dependencies). Minimum
+Android 10. Package name `com.pixelcontrols`.
+targetSdk is 28 (Android 9) on purpose: an app targeting it may still switch Wi-Fi itself, which is what the
+Android Auto wired/wireless switch needs without a helper (checked on the Pixel 9a, Android 17).
 
 ## Adblock
 1. Open the app → turn on "Block ads, pop-ups & trackers" → accept Android's one-time VPN prompt.
@@ -45,11 +49,10 @@ OTT and music apps:
 - Still seeing ads in an app? "Recent lookups by app": open the app, wait for an ad, check which servers it contacted
   and tap to block. Your entries go into "My blocked domains". If you have Afterglow's blocklist, paste it there.
 
-Lite mode (alternative): sets Private DNS to AdGuard DNS via the helper daemon. No VPN icon, no per-app control.
+Lite mode (alternative): sets Private DNS to AdGuard DNS (the app does it; no helper needed). No VPN icon, no per-app control.
 
 Private DNS note: a specific Private DNS provider makes Android bypass any local filter. The app switches it to
-Automatic through the daemon when needed and restores your original setting afterwards; without the daemon,
-set Settings → Network → Private DNS → Automatic.
+Automatic itself when needed and restores your original setting afterwards.
 
 ## DSLR (photo editor)
 The DSLR control now edits photos (it no longer changes display colors).
@@ -71,35 +74,94 @@ original's EXIF. The original is never modified.
 Limits: blown-out highlights, motion blur and missed focus can't be recovered; very textured night shots
 keep some grain.
 
-## Low signal mode (2.5)
-Goal: the app on screen (YouTube, OTT, UPI, anything) keeps working smoothly on a weak network.
-- Background apps are paused from using data (Data Saver), so the app on screen gets the whole weak link.
-- The app on screen is kept online even in the background (music, downloads, picture-in-picture); so are
-  installed UPI/banking apps (payment confirmations) and PixelControls itself.
-- DNS accelerator (every connection starts with a DNS lookup, and lookups fail first on a lossy link):
-  - repeat lookups answered instantly on the phone (cache that respects each answer's lifetime);
-  - if the network can't answer in time, the last known good answer is used, so a working app keeps
-    connecting through short dropouts (RFC 8767 "serve-stale");
-  - carrier DNS, Cloudflare and Google are raced (backup after 0.6 s, resend lost queries after 1.5 s).
-    Measured on a simulated 30%-loss link: 54/60 lookups answered in 0.85 s on average, vs 46/60 in 2.9 s before.
-  - ads and trackers blocked so they don't compete for the weak link. Your previous adblock state is
-    restored on OFF. UPI/banking apps bypass the filter (they can't see the VPN).
-- LTE/3G/2G instead of hunting for weak 5G; mobile data stays ready; a weak Wi-Fi hands over sooner.
-- Private DNS = Automatic (encrypted when possible, normal DNS on weak signal; never "no Internet").
-- OFF restores every changed setting exactly. Network doctor shows "Fix now" if Private DNS ever cuts you off.
-Limits: without root no app can reserve bandwidth for one app or change the phone's TCP settings; what
-can't arrive over a very weak signal still can't. The DNS accelerator works even without the daemon;
-everything else needs it. **After updating, re-run start_daemon.sh from your Mac.**
+## Sound profiles
+Tile "Sound Profile" (or the app): Normal (your own volumes) → Silent (vibrate, media muted) → Night (ring 40%,
+notifications and media off) → Normal. The tile changes it in place: the Quick Settings panel stays open.
+Two one-time grants make that possible, both set by `install.sh` over USB and kept across restarts:
+- Do Not Disturb access (`cmd notification allow_dnd`), needed to change the ringer mode.
+- The CONTROL_AUDIO app-ops set to allow. Android 16+ otherwise ignores volume changes from an app that isn't on
+  screen ("audio hardening"); if they're ever reset, the tile falls back to applying from an invisible screen (the
+  panel closes then).
+A profile only counts as active once the phone shows it. Switching to Silent makes Android play its usual
+vibrate feedback; the next tap can take a second or two while it does.
 
-## Helper daemon (Low signal, Lite adblock, Private DNS switching)
-adb push start_daemon.sh /data/local/tmp/ && adb shell sh /data/local/tmp/start_daemon.sh
-Re-run after each reboot. Safe to re-run: it now stops the previous listener first.
-New commands: ADBLOCK_DNS_ON/OFF, PRIVDNS_AUTO/RESTORE (backs up and exactly restores your Private DNS).
-Note: the daemon still has no authentication; any app on the phone could send it commands.
+## Low signal mode
+Goal: whatever app you open (OTT, YouTube, music, banking, UPI, anything) gets the weak connection.
+- **Focus (no helper, on battery and on the charger):** while Low signal is on, Pixel Controls' DNS filter only lets
+  the app on screen (and apps used in the last minute) make new connections; background apps get cached answers or
+  are refused, so they can't start downloads that compete with yours. Always let through: the system, Google Play
+  services (notifications), the keyboard, Pixel Controls; in the car also Android Auto and its navigation / music
+  apps. Connections already open aren't cut. Needs usage access (granted by `install.sh`); without it nothing is
+  held back.
+- **Battery & Data Saver** on battery: Android's own Data Saver blocks background data entirely (the app on screen
+  and apps playing in the foreground keep it). Battery Saver keeps your theme (no dark-mode switch).
+- Mobile data kept ready, a weak Wi-Fi hands over sooner, Private DNS = Automatic (never "no Internet"), DNS
+  accelerator (cache, serve-stale, raced resolvers).
+- OFF restores every setting exactly. Survives a restart.
+- With the helper running (optional): the 4G lock (no hunting for weak 5G) and Data Saver while charging too.
+Limits: Android lets no app reserve bandwidth per app or change TCP settings; what can't arrive over a very weak
+signal still can't. Apps set to bypass the filter (UPI/banking by default) aren't held back.
+
+## Battery watch
+Now and then, a notification when an app has been busy in the background, so you can stop it, restrict it or
+leave it. About once an hour on battery (never while charging) the last 2 hours are checked: an app that ran 30 min
+or more in the background (a background service while none of its screens showed) or used 50 MB or more of data
+there is reported: "X is busy in the background · running 42 min, 12 MB of data (last 2 h)". **Stop / restrict**
+opens its app page (Force stop, Battery → Restricted); **It's fine** exempts it. **Exempt apps** in the app: tick the
+apps never to track (work apps; Lookout for Work is ticked from the start).
+At most 3 a day, one per app a day; core system apps aren't reported. The app's Battery watch section shows the
+busiest apps and has an on/off switch and Check now.
+Android doesn't let apps read other apps' battery use (checked on Android 17: the API is hidden even with
+BATTERY_STATS), so background running time and data stand in for it. Uses the usage access install.sh grants.
+
+## What needs nothing, and what the helper daemon adds
+No debugging has to stay on. `install.sh` grants, once over USB (kept across restarts): WRITE_SECURE_SETTINGS,
+Do Not Disturb access, CONTROL_AUDIO, VPN permission, usage access, Pixel Controls' Data Saver exemption.
+With those the app does everything itself: adblock Full and Lite (with its DNS watchdog), Low signal (focus,
+Battery & Data Saver, settings, accelerator), sound profiles, brightness, Android Auto wired/wireless, DSLR.
+
+The **helper daemon** only adds what Android reserves for the adb shell: the 4G lock and Data Saver while charging. Start it from the Mac over USB: `./daemon.sh start` (stop: ■ Stop in the app or
+`./daemon.sh stop`; `status`, `log`). It runs until the phone restarts; nothing else depends on it.
+Optional: `mac/autostart.sh install` starts it whenever the phone is plugged into this Mac.
+Commands (127.0.0.1:28888, one per connection): BOOST_ON, OFF, STATUS, SHUTDOWN. No authentication: any app on the phone could send these.
+
+## After a phone restart
+Checked on the Pixel 9a (restart 23 Nov 2026, Low signal + extras and Night profile on beforehand): every permission
+kept; Sound profile, Wi-Fi handover / DNS settings and Data Saver kept; the VPN (Full adblock / DNS accelerator)
+comes back by itself ~2 min after the first unlock (Android queues apps' start-up work); Low signal re-applies Battery
+Saver (Android drops it at a restart or once charged past 90%). The helper daemon doesn't survive a restart: Low
+signal OFF without it restores everything the app owns and remembers to undo the 4G lock / charging Data Saver, which happens
+automatically the next time the helper runs (`./daemon.sh start`, then open the app). Afterwards every setting was
+identical to before the test.
 
 ## What was tested
-Blocklist: 77/77 tests on the real list. DNS filter: end-to-end with a real DNS server, every packet independently
-verified (checksums, IDs, answers); blocked names never leave the phone. Photo: 81/82 checks; 25/30 deliberately
-degraded photos measurably improved (30% mean error reduction), good photos barely changed. Known miss: a blue cast
-on a scene full of orange objects is under-corrected. Daemon: all commands + 4 restarts → exactly one listener (mksh).
-Not tested here: on a real device (no emulator in the build sandbox).
+On the Pixel 9a (Android 17): `./install.sh --check` → `tests/device_check.sh` (real Quick Settings taps on every tile,
+each put back exactly; Low signal focus with an app on screen; Lite watchdog fallback; helper start/stop; simulated
+car + cable). The phone must be unlocked for the tile and focus parts. A restart was tested separately.
+On the Mac: `bash tests/daemon_lifecycle.sh` (53 checks, helper on a simulated phone under mksh) and
+`bash tests/run_java_tests.sh` (blocklist 204, DNS hedging/cache 33, focus decisions 10). Photo: tests/PhotoTest.java
+(needs the sample images).
+
+## Android Auto: wired / wireless (2.7, from AA Switch 2.0.2; no helper needed)
+Android Auto connects wirelessly and stays wireless even with a cable plugged in. Wireless Android Auto runs over
+Wi-Fi, so Pixel Controls moves it to the cable by turning Wi-Fi off:
+- In the car (the phone connects to a car's Bluetooth: car-audio or hands-free class, e.g. "My Car"), a small
+  "Android Auto · <car>" notification shows and the app waits for the cable. Cable in + the car's Android Auto USB
+  handshake (a plain charger never does it) with Wi-Fi on → Wi-Fi off → the car runs Android Auto over the cable.
+  Cable out → Wi-Fi back on after 15 s (a quick re-plug stays wired). Car Bluetooth gone → Wi-Fi back on.
+  Once per plug-in, so tapping back to wireless sticks.
+- The car's two USB ports: a port without a USB data link (charge only) is never switched. The first time you plug
+  into a data port Pixel Controls doesn't know, it asks once ("Is this the car's Android Auto port?") and remembers
+  (by its data link, max current and voltage); a port where wired Android Auto started is remembered too. If Wi-Fi went
+  off but no Android Auto started within 90 s and the cable wasn't replugged, Wi-Fi comes back on. "Forget car ports"
+  in the app resets this. Android didn't report the car's USB handshake to the app on the first drive, hence learning.
+- Quick Settings tile "Android Auto" (lit = wired): tap switches wired ↔ wireless. In the app: the same, plus the
+  "switch automatically" option.
+- Works after a phone restart with nothing running; no helper, computer or debugging.
+- Car screen brightness is not something a phone app can change (the car controls its own backlight). Use Android
+  Auto's own setting (Android Auto settings → Day/night mode for map) and the car's display brightness. The old
+  "AA Dim" tile was removed in 2.7.
+- Test without the car (adb): `adb shell dumpsys battery set ac 1`, then
+  `adb shell am broadcast -n com.pixelcontrols/.auto.SimReceiver --es car "My Car" --ez accessory true --ez connected true`;
+  undo with `--ez accessory false --ez connected false` and `adb shell dumpsys battery reset`.
+- Not yet tried in the car: that the car starts Android Auto over the cable once Wi-Fi goes off.

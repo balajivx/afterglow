@@ -50,6 +50,7 @@ public final class AdblockDefaults {
         Map<String, List<String>> m = new LinkedHashMap<>();
         m.put("Hotstar / JioHotstar", Arrays.asList(
                 "ads.hotstar.com", "adsmanager.hotstar.com", "videoads.hotstar.com", "hesads.akamaized.net",
+                "ad.hotstar.com", "ads-api.hotstar.com", "secure-ads.hotstar.com",
                 "adtracker.jiocinema.com", "adtracker2.jiocinema.com-v1.edgesuite.net",
                 "adtracker2.jiocinema.com-v2.edgesuite.net", "adtracker.jiocinemas.com.akadns.net",
                 "jioads.akamaized.net", "jioadsweb.akamaized.net", "jioads.jio.com", "jioads.in",

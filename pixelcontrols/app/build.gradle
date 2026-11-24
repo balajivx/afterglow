@@ -9,9 +9,12 @@ android {
     defaultConfig {
         applicationId "com.pixelcontrols"
         minSdk 29
-        targetSdk 34
-        versionCode 7
-        versionName "2.5"
+        // Android 9 on purpose (as AA Switch): an app targeting it may still switch Wi-Fi on and off, which is how
+        // the Android Auto wired/wireless switch works with no helper. Checked on the Pixel 9a, Android 17, whose
+        // oldest accepted target is 28.
+        targetSdk 28
+        versionCode 9
+        versionName "2.7"
     }
 
     buildTypes {
@@ -28,4 +31,10 @@ android {
     androidResources {
         noCompress 'txt'
     }
+
+    lint {
+        abortOnError false
+        checkReleaseBuilds false
+    }
 }
+

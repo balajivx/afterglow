@@ -61,24 +61,34 @@ public class FeedTest {
     }
 
     @Test
-    public void testParseOtherFootball() throws Exception {
-        String json = "{\"sports\":[{\"leagues\":[{\"name\":\"English Premier League\",\"events\":[{" +
-                "\"name\":\"Coventry City v Everton\",\"shortName\":\"COV v EVE\",\"status\":\"post\",\"summary\":\"FT\"," +
-                "\"competitors\":[{\"displayName\":\"Coventry City\",\"score\":\"1\"}," +
-                "{\"displayName\":\"Everton\",\"score\":\"3\"}]}]}]}]}";
-
+    public void testLeagueFootball() throws Exception {
+        String today = "{\"events\":[{\"id\":\"1\",\"date\":\"2026-11-23T20:00Z\",\"status\":{\"type\":{\"state\":\"in\",\"shortDetail\":\"63'\"}},\"competitions\":[{\"competitors\":[{\"homeAway\":\"home\",\"score\":\"1\",\"team\":{\"displayName\":\"Brentford\"}},{\"homeAway\":\"away\",\"score\":\"0\",\"team\":{\"displayName\":\"Everton\"}}]}]},{\"id\":\"2\",\"date\":\"2026-11-23T15:00Z\",\"status\":{\"type\":{\"state\":\"pre\",\"shortDetail\":\"Scheduled\"}},\"competitions\":[{\"competitors\":[{\"homeAway\":\"home\",\"score\":\"0\",\"team\":{\"displayName\":\"Leeds\"}},{\"homeAway\":\"away\",\"score\":\"0\",\"team\":{\"displayName\":\"Wolves\"}}]}]}]}";
+        String yday = "{\"events\":[{\"id\":\"3\",\"date\":\"2026-11-22T14:00Z\",\"status\":{\"type\":{\"state\":\"post\",\"shortDetail\":\"FT\"}},\"competitions\":[{\"competitors\":[{\"homeAway\":\"home\",\"score\":\"1\",\"team\":{\"displayName\":\"Coventry City\"}},{\"homeAway\":\"away\",\"score\":\"3\",\"team\":{\"displayName\":\"Everton\"}}]}]},{\"id\":\"4\",\"date\":\"2026-11-22T17:30Z\",\"status\":{\"type\":{\"state\":\"post\",\"shortDetail\":\"FT\"}},\"competitions\":[{\"competitors\":[{\"homeAway\":\"home\",\"score\":\"2\",\"team\":{\"displayName\":\"Arsenal\"}},{\"homeAway\":\"away\",\"score\":\"0\",\"team\":{\"displayName\":\"Chelsea\"}}]}]},{\"id\":\"5\",\"date\":\"2026-11-22T19:45Z\",\"status\":{\"type\":{\"state\":\"post\",\"shortDetail\":\"FT\"}},\"competitions\":[{\"competitors\":[{\"homeAway\":\"home\",\"score\":\"2\",\"team\":{\"displayName\":\"Fulham\"}},{\"homeAway\":\"away\",\"score\":\"2\",\"team\":{\"displayName\":\"Spurs\"}}]}]},{\"id\":\"6\",\"date\":\"2026-11-22T12:30Z\",\"status\":{\"type\":{\"state\":\"post\",\"shortDetail\":\"FT\"}},\"competitions\":[{\"competitors\":[{\"homeAway\":\"home\",\"score\":\"0\",\"team\":{\"displayName\":\"Burnley\"}},{\"homeAway\":\"away\",\"score\":\"1\",\"team\":{\"displayName\":\"Newcastle\"}}]}]}]}";
         List<Feed.Item> list = new ArrayList<>();
-        Feed.parseOtherFootball(json, list);
+        Feed.parseLeagueFootball(java.util.Arrays.asList(today, yday), "Premier League", list);
+        assertEquals(Feed.PER_LEAGUE, list.size());
+        Feed.Item live = list.get(0);
+        assertTrue("in play comes first", live.live);
+        assertEquals("Brentford v Everton", live.head);
+        assertTrue(live.body.startsWith("1–0"));
+        assertTrue(live.body.endsWith("Premier League"));
+        // then results, newest first; Arsenal's left to the favourites; not-started ones left out
+        assertEquals("Fulham v Spurs", list.get(1).head);
+        assertEquals("Coventry City v Everton", list.get(2).head);
+        assertTrue(list.get(2).body.contains("1–3") && list.get(2).body.contains("FT"));
+        for (Feed.Item i : list) {
+            assertEquals(Feed.OTHER, i.sport);
+            assertEquals("FOOTBALL", i.tag);
+            assertFalse(i.head.contains("Arsenal"));
+            assertFalse(i.head.contains("Leeds"));
+        }
+    }
 
-        assertFalse(list.isEmpty());
-        Feed.Item item = list.get(0);
-        assertEquals(Feed.OTHER, item.sport);
-        assertEquals("FOOTBALL", item.tag);
-        assertFalse(item.live);
-        assertTrue(item.past);
-        assertEquals("Coventry City v Everton", item.head);
-        assertTrue(item.body.contains("1–3"));
-        assertTrue(item.body.contains("FT"));
+    @Test
+    public void testFootballLeaguesAndOrder() {
+        String[] slugs = new String[Feed.FOOTBALL_LEAGUES.length];
+        for (int i = 0; i < slugs.length; i++) slugs[i] = Feed.FOOTBALL_LEAGUES[i][0];
+        org.junit.Assert.assertArrayEquals(new String[]{"eng.1", "uefa.champions", "esp.1", "fra.1"}, slugs);
     }
 
     @Test
@@ -115,17 +125,58 @@ public class FeedTest {
     }
 
     @Test
-    public void testOtherFootballFiltersArsenal() throws Exception {
-        String json = "{\"sports\":[{\"leagues\":[{\"name\":\"English Premier League\",\"events\":[{" +
-                "\"name\":\"Arsenal v Chelsea\",\"shortName\":\"ARS v CHE\",\"status\":\"post\",\"summary\":\"FT\"," +
-                "\"competitors\":[{\"displayName\":\"Arsenal\",\"score\":\"2\"}," +
-                "{\"displayName\":\"Chelsea\",\"score\":\"0\"}]}]}]}]}";
+    public void testTeamCodes() {
+        assertEquals("ARS vs BVB", NextUpComplication.teamCodes("Arsenal v Borussia Dortmund"));
+        assertEquals("NEW 1–2 ARS", NextUpComplication.teamCodes("Newcastle United 1–2 Arsenal"));
+        assertEquals("ARS vs PSG", NextUpComplication.teamCodes("Arsenal v Paris Saint-Germain"));
+        assertEquals("BHA vs ARS", NextUpComplication.teamCodes("Brighton & Hove Albion v Arsenal"));
+        assertEquals("VER", NextUpComplication.teamCode("Hellas Verona"));      // not in the list: first 3 letters
+        assertEquals("KÖL", NextUpComplication.teamCode("1. FC Köln"));
+        assertEquals("HUL", NextUpComplication.teamCode("Hull City"));
+        // the line fits with the time: "ARS vs BVB · Wed 01:30" is well under the face's ~31 characters
+        assertTrue(("ARS vs BVB · Wed 01:30").length() <= 31);
+    }
 
-        List<Feed.Item> list = new ArrayList<>();
-        Feed.parseOtherFootball(json, list);
+    @Test
+    public void testHeadlinesAlternateCloseUpcoming() {
+        long now = 1_800_000_000_000L, h = 3600_000L;
+        Feed.Item ars = new Feed.Item(); ars.sport = Feed.FOOTBALL; ars.head = "Arsenal v Dortmund"; ars.time = now + 5 * h;
+        Feed.Item f1 = new Feed.Item(); f1.sport = Feed.F1; f1.head = "Abu Dhabi GP"; f1.time = now + 7 * h;      // 2 h after
+        Feed.Item ind = new Feed.Item(); ind.sport = Feed.CRICKET; ind.senior = true; ind.head = "India v NZ"; ind.time = now + 9 * 24 * h;
+        Feed.Item other = new Feed.Item(); other.sport = Feed.OTHER; other.head = "Leeds v Wolves"; other.time = now + h;
+        List<Feed.Item> hl = Feed.headlines(java.util.Arrays.asList(f1, ind, ars, other), now);
+        assertEquals("close together (2 h apart): both take turns", 2, hl.size());
+        assertEquals("Arsenal v Dortmund", hl.get(0).head);
+        assertEquals("Abu Dhabi GP", hl.get(1).head);
+        f1.time = now + 30 * h;                                                                                   // a day later
+        hl = Feed.headlines(java.util.Arrays.asList(f1, ind, ars), now);
+        assertEquals("far apart: only the soonest", 1, hl.size());
+        assertEquals("Arsenal v Dortmund", hl.get(0).head);
+        f1.time = now + 5 * h + 3 * h;                                                                            // exactly 3 h later
+        assertEquals("3 h apart still counts as close", 2, Feed.headlines(java.util.Arrays.asList(f1, ars), now).size());
+        assertEquals("only one upcoming: just that one", 1, Feed.headlines(java.util.Arrays.asList(ars), now).size());
+    }
 
-        // Arsenal matches are handled by the main Arsenal feed, so parseOtherFootball must drop it
-        assertTrue(list.isEmpty());
+    @Test
+    public void testHeadlinesParallelLive() {
+        long now = 1_800_000_000_000L;
+        Feed.Item a = new Feed.Item(); a.sport = Feed.FOOTBALL; a.head = "Arsenal v Chelsea"; a.live = true; a.time = now - 20 * 60_000L;
+        Feed.Item c = new Feed.Item(); c.sport = Feed.CRICKET; c.senior = true; c.head = "NZ v IND"; c.live = true; c.time = now - 3 * 3600_000L;
+        Feed.Item f1 = new Feed.Item(); f1.sport = Feed.F1; f1.head = "Abu Dhabi GP"; f1.time = now + 3600_000L;
+        List<Feed.Item> hl = Feed.headlines(java.util.Arrays.asList(f1, a, c), now);
+        assertEquals("two live at once: both take turns (the upcoming one waits)", 2, hl.size());
+        assertTrue(hl.get(0).live && hl.get(1).live);
+    }
+
+    @Test
+    public void testHeadlinesLiveFirst() {
+        long now = 1_800_000_000_000L;
+        Feed.Item live = new Feed.Item(); live.sport = Feed.FOOTBALL; live.head = "Arsenal v Chelsea"; live.live = true;
+        live.time = now - 20 * 60_000L; live.end = now + 90 * 60_000L;
+        Feed.Item f1 = new Feed.Item(); f1.sport = Feed.F1; f1.head = "Abu Dhabi GP"; f1.time = now + 30 * 3600_000L;
+        List<Feed.Item> h = Feed.headlines(java.util.Arrays.asList(f1, live), now);
+        assertEquals(1, h.size());
+        assertEquals("a live favourite takes the widget", "Arsenal v Chelsea", h.get(0).head);
     }
 
     @Test
@@ -201,12 +252,12 @@ public class FeedTest {
         assertEquals("NZ 243/5 · Play in ^1", line(true, now, "STUMPS", "NZ v IND", "NZ 243/5 (82 ov)", "IND", "LIVE", "" + soon)); // saved by v10
         assertEquals("LIVE · NZ 243/5 · IND 40/3", line(false, now, "LIVE", "NZ v IND", "NZ 243/5 (82 ov)  ·  IND 40/3 (9 ov)", "IND", "40/3", "0", ""));
         assertEquals("IND 410/8 & 22/1 · NZ 243 & 180", line(false, now, "LIVE", "NZ v IND", "IND 410/8 & 22/1 (6 ov)  ·  NZ 243 & 180", "IND", "22/1", "0", ""));
-        assertEquals("Newcastle vs ARS · in ^1", line(true, now, "ARSENAL", "Newcastle United v Arsenal", "Sat 21 Nov 23:00  ·  Premier League", "ARS", "23:00", "" + soon, ""));
-        assertEquals("Forest vs ARS · in ^1", line(true, now, "ARSENAL", "Nottingham Forest v Arsenal", "Sat 21 Nov 23:00  ·  Premier League", "ARS", "23:00", "" + soon, ""));
-        assertEquals("Newcastle vs ARS · Sat 23:00", line(false, now, "ARSENAL", "Newcastle United v Arsenal", "Sat 21 Nov 23:00  ·  Premier League", "ARS", "23:00", "" + nextWeek, ""));
-        assertEquals("Newcastle vs ARS · 5 Dec 23:00", line(false, now, "ARSENAL", "Newcastle United v Arsenal", "Sat 5 Dec 23:00  ·  Premier League", "ARS", "23:00", "" + later, ""));
-        assertEquals("Newcastle 1–2 ARS · Won", line(false, now, "ARSENAL", "Newcastle United 1–2 Arsenal", "Won  ·  Yesterday", "ARS", "W 2-1", "0", ""));
-        assertEquals("Newcastle vs ARS · LIVE", line(false, now, "LIVE", "Newcastle United v Arsenal", "On now · score at full time", "ARS", "LIVE", "0", ""));
+        assertEquals("NEW vs ARS · in ^1", line(true, now, "ARSENAL", "Newcastle United v Arsenal", "Sat 21 Nov 23:00  ·  Premier League", "ARS", "23:00", "" + soon, ""));
+        assertEquals("NFO vs ARS · in ^1", line(true, now, "ARSENAL", "Nottingham Forest v Arsenal", "Sat 21 Nov 23:00  ·  Premier League", "ARS", "23:00", "" + soon, ""));
+        assertEquals("NEW vs ARS · Sat 23:00", line(false, now, "ARSENAL", "Newcastle United v Arsenal", "Sat 21 Nov 23:00  ·  Premier League", "ARS", "23:00", "" + nextWeek, ""));
+        assertEquals("NEW vs ARS · 5 Dec 23:00", line(false, now, "ARSENAL", "Newcastle United v Arsenal", "Sat 5 Dec 23:00  ·  Premier League", "ARS", "23:00", "" + later, ""));
+        assertEquals("NEW 1–2 ARS · Won", line(false, now, "ARSENAL", "Newcastle United 1–2 Arsenal", "Won  ·  Yesterday", "ARS", "W 2-1", "0", ""));
+        assertEquals("NEW vs ARS · LIVE", line(false, now, "LIVE", "Newcastle United v Arsenal", "On now · score at full time", "ARS", "LIVE", "0", ""));
         assertEquals("Las Vegas · FP1 in ^1", line(true, now, "F1", "Las Vegas GP", "Tomorrow 06:00  ·  FP1", "F1", "06:00", "" + soon, ""));
         assertEquals("Las Vegas · Tmrw 06:00 · FP1", line(false, now, "F1", "Las Vegas GP", "Tomorrow 06:00  ·  FP1", "F1", "06:00", "" + nextWeek, ""));
         assertEquals("Abu Dhabi · Quali in ^1", line(true, now, "F1", "Abu Dhabi GP", "Sat 5 Dec 14:00  ·  Qualifying", "F1", "14:00", "" + soon, ""));
@@ -387,5 +438,88 @@ public class FeedTest {
         assertFalse(Wallpapers.isNewer("2026-11", 2, "2026-11", 2));  // already have it
         assertFalse(Wallpapers.isNewer("2026-10", 9, "2026-11", 1));  // an older month
         assertTrue(Wallpapers.isNewer("2026-11", 1, "", 1));          // nothing yet
+    }
+
+    @Test
+    public void testUpcomingMatchTakesPrecedenceOverStumps() {
+        long now = 1_000_000_000_000L, h = 3600_000L;
+        List<Feed.Item> items = new ArrayList<>();
+
+        // Cricket at stumps (Day 3 ended, Day 4 resumes in 6 hours)
+        Feed.Item cricket = new Feed.Item();
+        cricket.sport = Feed.CRICKET;
+        cricket.senior = true;
+        cricket.live = true;
+        cricket.time = now - 48 * h;
+        cricket.resume = now + 6 * h;
+        cricket.head = "NZ v IND";
+        cricket.body = "NZ 368  ·  IND 486/4 (125 ov)";
+        items.add(cricket);
+
+        // Arsenal playing in 2 hours
+        Feed.Item arsenal = new Feed.Item();
+        arsenal.sport = Feed.FOOTBALL;
+        arsenal.time = now + 2 * h;
+        arsenal.head = "Newcastle United v Arsenal";
+        arsenal.body = "Today 23:00  ·  Premier League";
+        items.add(arsenal);
+
+        // Headline must pick Arsenal because cricket is at stumps and Arsenal plays sooner!
+        Feed.Item picked = Feed.headline(items, now);
+        assertNotNull(picked);
+        assertEquals(Feed.FOOTBALL, picked.sport);
+        assertEquals("Newcastle United v Arsenal", picked.head);
+    }
+
+    @Test
+    public void testInPlayCricketTakesPrecedenceOverUpcomingMatch() {
+        long now = 1_000_000_000_000L, h = 3600_000L;
+        List<Feed.Item> items = new ArrayList<>();
+
+        Feed.Item cricket = new Feed.Item();
+        cricket.sport = Feed.CRICKET;
+        cricket.senior = true;
+        cricket.live = true;
+        cricket.time = now - 48 * h;
+        cricket.resume = 0; // actively in play
+        cricket.head = "NZ v IND";
+        items.add(cricket);
+
+        Feed.Item arsenal = new Feed.Item();
+        arsenal.sport = Feed.FOOTBALL;
+        arsenal.time = now + 2 * h;
+        arsenal.head = "Newcastle United v Arsenal";
+        items.add(arsenal);
+
+        Feed.Item picked = Feed.headline(items, now);
+        assertNotNull(picked);
+        assertEquals(Feed.CRICKET, picked.sport);
+        assertEquals("NZ v IND", picked.head);
+    }
+
+    @Test
+    public void testStumpsPickedWhenNoSoonerUpcomingMatch() {
+        long now = 1_000_000_000_000L, h = 3600_000L;
+        List<Feed.Item> items = new ArrayList<>();
+
+        Feed.Item cricket = new Feed.Item();
+        cricket.sport = Feed.CRICKET;
+        cricket.senior = true;
+        cricket.live = true;
+        cricket.time = now - 48 * h;
+        cricket.resume = now + 6 * h;
+        cricket.head = "NZ v IND";
+        items.add(cricket);
+
+        Feed.Item arsenal = new Feed.Item();
+        arsenal.sport = Feed.FOOTBALL;
+        arsenal.time = now + 30 * h; // 30 hours away (not in next 24h)
+        arsenal.head = "Newcastle United v Arsenal";
+        items.add(arsenal);
+
+        Feed.Item picked = Feed.headline(items, now);
+        assertNotNull(picked);
+        assertEquals(Feed.CRICKET, picked.sport);
+        assertEquals("NZ v IND", picked.head);
     }
 }

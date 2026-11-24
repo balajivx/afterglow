@@ -9,6 +9,9 @@ import androidx.wear.watchface.complications.data.ComplicationText;
 import androidx.wear.watchface.complications.data.CountDownTimeReference;
 import androidx.wear.watchface.complications.data.TimeDifferenceComplicationText;
 import androidx.wear.watchface.complications.data.TimeDifferenceStyle;
+import androidx.wear.watchface.complications.datasource.TimelineEntry;
+import androidx.wear.watchface.complications.datasource.TimeInterval;
+import androidx.wear.watchface.complications.datasource.ComplicationDataTimeline;
 import androidx.wear.watchface.complications.data.ComplicationType;
 import androidx.wear.watchface.complications.data.LongTextComplicationData;
 import androidx.wear.watchface.complications.data.MonochromaticImage;
@@ -60,7 +63,9 @@ public class NextUpComplication extends ComplicationDataSourceService {
             // after play resumed. Only a check that got an answer counts; a failed one is tried again next time.
             boolean reached = online && Feed.lastFetched > 0;
             if (reached) Moments.check(this, all); // a wicket or a result since the last check: buzz (no extra fetches)
+
             Feed.Item h = Feed.headline(all, now);
+
             if (online || h != null) {
                 Feed.Item n = Feed.nextItem(all, now);
                 when.edit().putLong("at", reached && only == null ? now : when.getLong("at", 0))
@@ -69,26 +74,53 @@ public class NextUpComplication extends ComplicationDataSourceService {
                         .putInt("liveSport", h == null ? Feed.CRICKET : h.sport).apply();
             }
             String[] parts;
+            List<String[]> turns = new java.util.ArrayList<>();   // more than one: the face takes turns
             if (h != null) {
-                // The last part: when it starts, for a countdown the watch keeps ticking by itself (0: none).
-                long start = h.past ? 0 : h.live ? h.resume : h.time;
-                // At stumps, which day's play is next ("Day 2"): resume = first day's start + N days - 30 min.
-                String day = h.live && h.resume > 0 ? String.valueOf((h.resume - h.time + 30 * 60_000L) / (24 * 3600_000L) + 1) : "";
-                // Race week: the circuit's own outline stands in for the flag (a track drawing per circuit).
-                String track = h.sport == Feed.F1 && h.circuit != null && !h.past && start - now < 7 * 24 * 3600_000L ? h.circuit : "";
-                if (h.live && h.resume > 0 && now >= h.resume) start = 0; // play is due: no countdown (see label)
-                parts = new String[]{label(h, now), h.head, h.body, h.shortTitle, h.shortText, String.valueOf(start), day, track};
-                rail(h, now);
+                List<Feed.Item> shown = Feed.headlines(all, now);
+                if (shown.isEmpty()) shown = java.util.Collections.singletonList(h);
+                for (Feed.Item t : shown) turns.add(parts(t, now));
+                parts = turns.get(0);
+                rail(shown.get(0), now);   // the rail follows the soonest
                 cache.edit().putString("t", String.join("\n", parts)).apply();
             } else {
                 String saved = cache.getString("t", null);
                 parts = saved == null ? new String[]{"SPORTS", "No connection", "", "SPT", "--"} : saved.split("\n", -1);
             }
             try {
-                listener.onComplicationData(data(type, parts));
+                ComplicationData first = data(type, parts);
+                if (turns.size() < 2 || first == null) {
+                    listener.onComplicationData(first);
+                } else {
+                    // Two (or more) events: alternate every TURN seconds for the next half hour. The face switches by
+                    // itself (no wake-ups, nothing fetched); each countdown keeps ticking on its own.
+                    List<ComplicationData> each = new java.util.ArrayList<>();
+                    for (String[] t : turns) each.add(data(type, t));
+                    List<TimelineEntry> entries = new java.util.ArrayList<>();
+                    java.time.Instant t0 = java.time.Instant.ofEpochMilli(now);
+                    for (int k = 1; k < TURNS; k++) {
+                        java.time.Instant a = t0.plusSeconds((long) k * TURN), b = a.plusSeconds(TURN);
+                        entries.add(new TimelineEntry(new TimeInterval(a, b), each.get(k % each.size())));
+                    }
+                    listener.onComplicationDataTimeline(new ComplicationDataTimeline(first, entries));
+                }
             } catch (Exception ignored) {
             }
         });
+    }
+
+    /** Seconds each event stays on the face, and how many turns (half an hour) one answer covers. */
+    static final int TURN = 15, TURNS = 120;
+
+    /** {label, head, body, shortTitle, shortText, start, day, track} for one event. */
+    private static String[] parts(Feed.Item h, long now) {
+        // The last part: when it starts, for a countdown the watch keeps ticking by itself (0: none).
+        long start = h.past ? 0 : h.live ? h.resume : h.time;
+        // At stumps, which day's play is next ("Day 2"): resume = first day's start + N days - 30 min.
+        String day = h.live && h.resume > 0 ? String.valueOf((h.resume - h.time + 30 * 60_000L) / (24 * 3600_000L) + 1) : "";
+        // Race week: the circuit's own outline stands in for the flag (a track drawing per circuit).
+        String track = h.sport == Feed.F1 && h.circuit != null && !h.past && start - now < 7 * 24 * 3600_000L ? h.circuit : "";
+        if (h.live && h.resume > 0 && now >= h.resume) start = 0; // play is due: no countdown (see label)
+        return new String[]{label(h, now), h.head, h.body, h.shortTitle, h.shortText, String.valueOf(start), day, track};
     }
 
     @Override
@@ -99,9 +131,10 @@ public class NextUpComplication extends ComplicationDataSourceService {
     /**
      * A live match the widget should check every 15 minutes: in play, or a Test at stumps once the next day's
      * start is near or past (until the feed says it's under way, or stumps keeps being reported).
+     * Works for all sports (cricket, football, F1).
      */
     static boolean liveNow(Feed.Item h, long now) {
-        return h.live && (h.resume == 0 || now >= h.resume - 20 * 60_000L);
+        return Feed.isLive(h, now);
     }
 
     private boolean hasNetwork() {
@@ -162,7 +195,8 @@ public class NextUpComplication extends ComplicationDataSourceService {
         boolean arsenal = p[1].contains("Arsenal"), f1 = "F1".equals(p[3]);
         long start = p.length > 5 ? parseLong(p[5]) : 0;
         String head = p[1].replace("Arsenal", "ARS");
-        if (arsenal) head = shortTeams(head).replace(" v ", " vs ");
+        // 2026-11-23: club names pushed the kick-off time off the face: both sides as 3-letter codes ("NEW vs ARS").
+        if (arsenal) head = teamCodes(p[1]);
         if (f1) head = shortRace(head);
         if ("STUMPS".equals(p[0]) && p[2].matches(".*\\d.*")) {
             String score = p[2].replaceAll("\\s*\\([^)]*\\)", "");
@@ -206,6 +240,51 @@ public class NextUpComplication extends ComplicationDataSourceService {
         return s.replace(" GP", "").replace("Saudi Arabian", "Saudi").replace("Emilia Romagna", "Imola")
                 .replace("United States", "USA").replace("Mexico City", "Mexico").replace("São Paulo", "Brazil")
                 .replace("Sao Paulo", "Brazil");
+    }
+
+    /** "Newcastle United v Arsenal" -> "NEW vs ARS", "Newcastle United 1–2 Arsenal" -> "NEW 1–2 ARS". */
+    static String teamCodes(String head) {
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("^(.+?) (v|\\d+\\s*[–-]\\s*\\d+) (.+)$").matcher(head.trim());
+        if (!m.matches()) return head.replace("Arsenal", "ARS");
+        String mid = m.group(2).equals("v") ? "vs" : m.group(2).replace("-", "–").replace(" ", "");
+        return teamCode(m.group(1)) + " " + mid + " " + teamCode(m.group(3));
+    }
+
+    private static final java.util.Map<String, String> CODES = new java.util.HashMap<>();
+    static {
+        String[] pairs = {
+            // Premier League (and recent members)
+            "Arsenal=ARS", "Aston Villa=AVL", "Bournemouth=BOU", "AFC Bournemouth=BOU", "Brentford=BRE", "Brighton & Hove Albion=BHA",
+            "Brighton=BHA", "Burnley=BUR", "Chelsea=CHE", "Crystal Palace=CRY", "Everton=EVE", "Fulham=FUL", "Leeds United=LEE",
+            "Liverpool=LIV", "Manchester City=MCI", "Manchester United=MUN", "Newcastle United=NEW", "Nottingham Forest=NFO",
+            "Sunderland=SUN", "Tottenham Hotspur=TOT", "West Ham United=WHU", "Wolverhampton Wanderers=WOL", "Wolves=WOL",
+            "Leicester City=LEI", "Southampton=SOU", "Ipswich Town=IPS", "Hull City=HUL", "Coventry City=COV", "Sheffield United=SHU",
+            "Luton Town=LUT", "Watford=WAT", "Norwich City=NOR", "Middlesbrough=MID", "Stoke City=STK", "West Bromwich Albion=WBA",
+            // Europe
+            "Borussia Dortmund=BVB", "Bayern Munich=BAY", "FC Bayern München=BAY", "Bayer Leverkusen=LEV", "RB Leipzig=RBL",
+            "Eintracht Frankfurt=SGE", "VfB Stuttgart=VFB", "Real Madrid=RMA", "Barcelona=BAR", "FC Barcelona=BAR",
+            "Atlético Madrid=ATM", "Atletico Madrid=ATM", "Athletic Club=ATH", "Villarreal=VIL", "Real Sociedad=RSO", "Sevilla=SEV",
+            "Paris Saint-Germain=PSG", "Marseille=OM", "Olympique de Marseille=OM", "Monaco=MON", "AS Monaco=MON", "Lille=LIL", "Lyon=OL",
+            "Inter Milan=INT", "Internazionale=INT", "Inter=INT", "AC Milan=MIL", "Juventus=JUV", "Napoli=NAP", "Atalanta=ATA",
+            "Roma=ROM", "AS Roma=ROM", "Lazio=LAZ", "Benfica=BEN", "FC Porto=POR", "Porto=POR", "Sporting CP=SCP", "Sporting Lisbon=SCP",
+            "Ajax=AJA", "PSV Eindhoven=PSV", "PSV=PSV", "Feyenoord=FEY", "Club Brugge=BRU", "Union St.-Gilloise=USG", "Galatasaray=GAL",
+            "Fenerbahce=FEN", "Celtic=CEL", "Rangers=RAN", "Olympiacos=OLY", "Slavia Prague=SLA", "Bodo/Glimt=BOD", "Bodø/Glimt=BOD",
+            "FC Copenhagen=FCK", "Copenhagen=FCK", "Qarabag=QAR", "Kairat Almaty=KAI", "Pafos=PAF", "Shakhtar Donetsk=SHA",
+            "Red Bull Salzburg=SAL", "Young Boys=YB", "Dinamo Zagreb=DZG", "Sparta Prague=SPA", "Sturm Graz=STU"};
+        for (String p : pairs) { int e = p.indexOf('='); CODES.put(p.substring(0, e), p.substring(e + 1)); }
+    }
+
+    /** A club's 3-letter code; unknown: the first 3 letters of its main word ("Hellas Verona" -> "VER"). */
+    static String teamCode(String name) {
+        String n = name.trim();
+        String c = CODES.get(n);
+        if (c != null) return c;
+        String core = n.replaceAll("\\b(FC|AFC|CF|SC|AC|AS|SS|SSC|SL|CD|RC|UD|SD|Club|Real|Borussia|Olympique|Sporting|Hellas|VfL|TSG|1\\.)\\b", " ")
+                .replaceAll("\\b(United|City|Town|Hotspur|Wanderers|Albion|Athletic|Rovers)\\b", " ").trim();
+        if (core.isEmpty()) core = n;
+        String word = core.split("\\s+")[0].replaceAll("[^\\p{L}]", "");
+        if (word.length() < 3) word = core.replaceAll("[^\\p{L}]", "");
+        return word.length() >= 3 ? word.substring(0, 3).toUpperCase(java.util.Locale.ROOT) : n.toUpperCase(java.util.Locale.ROOT);
     }
 
     /** "Newcastle United" -> "Newcastle", "Brighton & Hove Albion" -> "Brighton": room for the time. */

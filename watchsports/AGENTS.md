@@ -83,3 +83,12 @@ existing fetches; Settings switch in the app). App visuals (`Visuals`, only anim
 round the screen edge (`Ring`: countdown in the last 24 h, Test days 5 segments, overs of 20/50, Arsenal minutes,
 F1 session time; sweeps in), breathing LIVE dot, F1 weekend stations (`Weekend`, from `Item.sessions`), Ferrari grid
 strip (20 bars, Ferraris lit). Tests in FeedTest (wickets, moments, ring, weekend).
+
+v18 (2026-11-23, 1.8): (1) the face's widget takes turns (`Feed.headlines`: every
+live favourite in parallel, else the soonest upcoming favourite plus any starting within 3 h of it (CLOSE_MS), else headline()); `NextUpComplication` answers with a
+ComplicationDataTimeline that alternates every 15 s for 30 min (the face switches by itself, no wake-ups); the rail
+follows the soonest. (2) Other scores football: only Premier League, Champions League, LaLiga, Ligue 1, in that order
+(`FOOTBALL_LEAGUES`; ESPN site scoreboards per league, today + yesterday, live then newest results, 3 per league);
+the old all-leagues header feed is gone. `Feed.get` unpacks gzip (those scoreboards send it unasked).
+
+Face line: Arsenal fixtures as 3-letter club codes (`NextUpComplication.teamCodes`: "NEW vs ARS", "ARS vs BVB"), so the kick-off time fits.
